@@ -1,0 +1,403 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Threading;
+
+namespace csfind
+{
+    #region ◁ Config ▷
+    /// <summary>
+    /// Simplify access to common config key names.
+    /// </summary>
+    internal struct Keys
+    {
+        public const string LastCount        = "LastCount";
+        public const string LastUse          = "LastUse";
+        public const string FirstRun         = "FirstRun";
+        public const string TruncateLength   = "TruncateLength";
+        public const string TimeoutInMinutes = "TimeoutInMinutes";
+        public const string LastCommand      = "LastCommand";
+        public const string LogLevel         = "LogLevel";
+    }
+    #endregion
+
+    internal class Program
+    {
+        #region ◁ Local scope ▷
+        public static bool _debugMode = false;
+        public static bool _locateMode = false;
+        public static bool _mtsMode = false;
+        static bool _noIssue = true;
+        static string _driveText = "C:\\";
+        static string _patternText = "*.config";
+        static int _totalMatchCount = 0;
+        static int _numThreads = 4;
+        static double _mtsPercent = 0.8; // 80% required for multi-term search
+        static CancellationTokenSource _cts;
+        static List<string> _terms = new List<string>();
+        #endregion
+
+        static void Main(string[] args)
+        {
+            #region ◁ Init ▷
+            AppDomain.MonitoringIsEnabled = true;
+
+            Console.OutputEncoding = Encoding.UTF8;
+            Console.ForegroundColor = ConsoleColor.Gray;
+
+            ConfigManager.OnError += OnConfigError;
+            var timeout = ConfigManager.Get<double>(Keys.TimeoutInMinutes, defaultValue: 120);
+            var truncate = ConfigManager.Get<int>(Keys.TruncateLength, defaultValue: 100);
+            _cts = new CancellationTokenSource(TimeSpan.FromMinutes(timeout));
+            var level = ConfigManager.Get<LogLevel>(Keys.LogLevel);
+            string lastCount = ConfigManager.Get(Keys.LastCount, defaultValue: "0");
+            var lastCmd = ConfigManager.Get<string>(Keys.LastCommand, defaultValue: string.Empty);
+
+            if (Debugger.IsAttached)
+            {
+                ConfigManager.Set(Keys.LogLevel, LogLevel.Debug);
+                Console.WriteLine($"[{LogLevel.Info}] You have {Environment.ProcessorCount} thread cores available");
+            }
+            else
+            {
+                ConfigManager.Set(Keys.LogLevel, LogLevel.Info);
+            }
+            Logger.Write(Extensions.ReflectAssemblyFramework(typeof(Program)));
+            #endregion
+
+            #region ◁ Domain ▷
+            Console.CancelKeyPress += (s, e) =>
+            {
+                e.Cancel = true;
+                _cts?.Cancel();
+                Console.WriteLine();
+                Logger.Write("▷ Process canceled by user! ", "", LogLevel.Warning);
+                Console.ForegroundColor = ConsoleColor.Gray;
+                Thread.Sleep(2000);
+            };
+            AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
+            {
+                Console.WriteLine($"\r\nUnhandledException: {e.ExceptionObject}");
+                _noIssue = false;
+            };
+            AppDomain.CurrentDomain.FirstChanceException += (sender, e) =>
+            {
+                if (e.Exception != null && // Ignore common exceptions that are not critical
+                   !e.Exception.Message.StartsWith("Could not load file or assembly") &&
+                   !e.Exception.Message.StartsWith("Could not find a part of the path") &&
+                   !e.Exception.Message.StartsWith("The symbolic link cannot be followed") &&
+                   !e.Exception.Message.StartsWith("The process cannot access the file") &&
+                   !e.Exception.Message.StartsWith("The operation was canceled") &&
+                   !e.Exception.Message.StartsWith("Access to the path"))
+                {
+                    Console.WriteLine($"\r\nFirstChanceException: {e.Exception.Message}");
+                    _noIssue = false;
+                }
+                else if (e.Exception != null &&
+                    e.Exception.Message.StartsWith("Second path fragment must not be a drive or UNC name"))
+                {
+                    Console.WriteLine($"\r\nFirstChanceException: {e.Exception.Message}");
+                    Thread.Sleep(3000);
+                    return;
+                }
+            };
+            var trust = AppDomain.CurrentDomain.ApplicationTrust;
+            if (!trust.IsApplicationTrustedToRun)
+            {
+                AppDomain.CurrentDomain.ApplicationTrust.IsApplicationTrustedToRun = true; // Ensure the application is trusted to run
+            }
+            if (_debugMode)
+            {
+                Console.WriteLine("IsApplicationTrustedToRun? " + trust.IsApplicationTrustedToRun);
+                Console.WriteLine("Permissions granted: " + trust.DefaultGrantSet.PermissionSet.ToXml());
+            }
+            LogDomainAssemblies();
+            #endregion
+
+            #region ◁ Parse command line ▷
+            // Test for basic mode flags first.
+            Environment.GetCommandLineArgs().Skip(1).ToList().ForEach(arg =>
+            {
+                if (arg.Equals($"{CommandLineHelper.preamble}debug", StringComparison.CurrentCultureIgnoreCase))
+                {
+                    _debugMode = true;
+                    Logger.Write("Debug mode enabled", "", LogLevel.Info);
+                }
+                if (arg.Equals($"{CommandLineHelper.preamble}locate", StringComparison.CurrentCultureIgnoreCase))
+                {
+                    _locateMode = true;
+                    Logger.Write("Locate mode enabled", "", LogLevel.Info);
+                }
+            });
+
+            // Test for no arguments.
+            if (args.Length == 0 && !string.IsNullOrEmpty(lastCmd))
+            {
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine($"[{LogLevel.Info}] LastCommand ▷ {lastCmd}");
+                Console.ForegroundColor = ConsoleColor.DarkCyan;
+                Console.Write($"[{LogLevel.Notice}] No arguments were provided, would you like to re-use your last command? [Y/N] ");
+                Console.ForegroundColor = ConsoleColor.Gray;
+                if (Console.ReadKey(false).Key == ConsoleKey.Y)
+                {
+                    args = lastCmd.Split(' ');
+                }
+                Console.WriteLine();
+            }
+
+            _terms = CommandLineHelper.GetTermValues(args);
+            if (_terms.Count > 0 && !_locateMode)
+            {
+                _mtsMode = true;
+                Logger.Write("MultiTermSearch mode enabled", "", LogLevel.Info);
+                Logger.Write($"Using terms: {string.Join(", ", _terms)}", "", LogLevel.Info);
+            }
+            else if (_terms.Count > 0 && _locateMode)
+            {
+                Logger.Write("MultiTermSearch mode will be ignored because Locate mode was supplied", "", LogLevel.Warning);
+                Logger.Write($"If you wish to use MultiTermSearch mode then remove the \"{CommandLineHelper.preamble}locate\" switch", "", LogLevel.Notice);
+            }
+            else if (!_locateMode)
+            {
+                Logger.Write($"You must supply \"{CommandLineHelper.preamble}term\" values for multi-term search mode, or supply \"{CommandLineHelper.preamble}locate\" for file finding mode", "", LogLevel.Warning);
+            }
+
+            // Check for passed drive value
+            string firstDrive = CommandLineHelper.GetFirstDriveValue(args);
+            if (string.IsNullOrWhiteSpace(firstDrive))
+            {
+                Console.WriteLine($"[{LogLevel.Notice}] You can also supply a drive value. Use {CommandLineHelper.preamble}drive <value> to specify a drive term.");
+                Logger.Write($"Using default drive value [{_driveText}]", "", LogLevel.Info);
+            }
+            else
+            {
+                _driveText = firstDrive;
+                if (!_driveText.EndsWith("\\"))
+                    _driveText = $"{_driveText}\\"; // Ensure trailing backslash
+                Logger.Write($"Using drive term: {_driveText}", "", LogLevel.Info);
+            }
+
+            // Check for passed search pattern value
+            string firstPattern = CommandLineHelper.GetFirstPatternValue(args);
+            if (string.IsNullOrWhiteSpace(firstPattern))
+            {
+                Console.WriteLine($"[{LogLevel.Notice}] You can also supply a search pattern value. Use {CommandLineHelper.preamble}pattern <value> to specify a search pattern term.");
+                Logger.Write($"Using default search pattern value [{_patternText}]", "", LogLevel.Info);
+            }
+            else
+            {
+                _patternText = firstPattern;
+                Logger.Write($"Using pattern: {_patternText}", "", LogLevel.Info);
+            }
+
+            // Check for passed thread value
+            string firstThread = CommandLineHelper.GetFirstThreadValue(args);
+            if (string.IsNullOrWhiteSpace(firstThread))
+            {
+                Console.WriteLine($"[{LogLevel.Notice}] You can also supply a thread count value. Use {CommandLineHelper.preamble}threads <value> to specify the number of threads to use during a search.");
+            }
+            else
+            {
+                if (!int.TryParse(firstThread, out _numThreads))
+                    Logger.Write($"Could not convert {firstThread} into a thread count.", "", LogLevel.Warning);
+                else if (_numThreads < 1)
+                    _numThreads = 1;
+                else if (_numThreads > Environment.ProcessorCount)
+                    Logger.Write($"Your processor count is {Environment.ProcessorCount}, it's recommended that you don't exceed {Environment.ProcessorCount}.", "", LogLevel.Warning);
+            }
+
+            if (!_locateMode)
+            {
+                // Check for passed % value
+                string firstPercent = CommandLineHelper.GetFirstPercentValue(args);
+                if (string.IsNullOrWhiteSpace(firstPercent))
+                {
+                    Console.WriteLine($"[{LogLevel.Notice}] You can also supply a percent count value. Use {CommandLineHelper.preamble}percent <value> to specify the percentage of a positive multi-term match.");
+                }
+                else
+                {
+                    if (!double.TryParse(firstPercent, out _mtsPercent))
+                        Logger.Write($"Could not convert {firstPercent} into a percentage.", "", LogLevel.Warning);
+                    else if (_mtsPercent > 1.0) // 100% is the maximum
+                        _mtsPercent = 1.0;
+                    else if (_mtsPercent < 0.0) // 10% is the minimum
+                        _mtsPercent = 0.1;
+
+                    Logger.Write($"Using percent: {_mtsPercent} ({_mtsPercent * 100}%)", "", LogLevel.Info);
+                }
+            }
+            #endregion
+
+            #region ◁ Basic validation ▷
+            if (!Directory.Exists(_driveText))
+            {
+                Logger.Write($"Cannot find \"{_driveText}\". Try a different root folder.", "", LogLevel.Critical);
+                Thread.Sleep(3000);
+                return;
+            }
+            #endregion
+
+            #region ◁ Search ▷
+            var startTime = DateTime.Now;
+
+            if (_locateMode) // file find mode
+            {
+                Logger.Write($"Searching with {_numThreads} threads ");
+                Logger.Write($"You can press <Ctrl-C> to cancel the search at any time.  Any currently collected results will be displayed. ", "", LogLevel.Notice);
+
+                var findit = new MultiThreadSearcher($"{_patternText}", maxThreads: _numThreads, verbose: true);
+                if (_debugMode) { findit.OnStopwatch += OnStopwatchEvent; }
+                var fmatches = findit.Search($"{_driveText}", _cts.Token);
+                if (fmatches.Count > 0)
+                {
+                    Console.WriteLine($"[{LogLevel.Info}] Analyzing {fmatches.Count} {(fmatches.Count == 1 ? "result" : "results")}…");
+                    foreach (var file in fmatches)
+                    {
+                        _totalMatchCount++;
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine($"[{LogLevel.Match}]");
+                        Console.ForegroundColor = ConsoleColor.DarkGray;
+                        Console.WriteLine($"  ▷ {file.Truncate(truncate)} ");
+                        Console.ForegroundColor = ConsoleColor.Gray;
+                        Logger.Write($"Found \"{file}\"", "", LogLevel.Match, console: false);
+                    }
+                }
+                Logger.Write($"Total match count was {_totalMatchCount}", "", LogLevel.Notice);
+                if (_debugMode) { findit.OnStopwatch -= OnStopwatchEvent; }
+            }
+            else if (_mtsMode && _terms.Count > 0) // file parse mode
+            {
+                Logger.Write($"Searching with {_numThreads} threads ");
+                Logger.Write($"You can press <Ctrl-C> to cancel the search at any time.  Any currently collected results will be displayed. ", "", LogLevel.Notice);
+
+                var mtSearcher = new MultiTermSearcher($"{_patternText}", "", multiTermMatch: _terms, requiredMatchPercent: _mtsPercent, maxParallelism: _numThreads, verbose: true);
+                if (_debugMode) { mtSearcher.OnStopwatch += OnStopwatchEvent; }
+                var results = mtSearcher.Search($"{_driveText}", _cts.Token);
+                Logger.Write($"{results.Count} files matched {_mtsPercent * 100}% {(_mtsPercent.IsOne() ? "" : "(or more)")} of given terms", "", LogLevel.Notice);
+                foreach (var file in results)
+                {
+                    _totalMatchCount++;
+                    Logger.Write($"{file}", "", LogLevel.Match, console: false);
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine($"[{LogLevel.Match}] {file.FilePath}");
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"  ▷ Line #{file.LineNumber} ▷ {file.LineData.Truncate(truncate)} ");
+                    Console.ForegroundColor = ConsoleColor.Gray;
+                }
+                Console.WriteLine($"[{LogLevel.Info}] Line details in the console will be truncated to {truncate} chars max.  Full output will be saved in the log file. ");
+                if (_debugMode) { mtSearcher.OnStopwatch -= OnStopwatchEvent; }
+            }
+            else if (_mtsMode && _terms.Count == 0)
+            {
+                Logger.Write($"You must specify at least one {CommandLineHelper.preamble}term argument", "", LogLevel.Warning);
+            }
+            var elapsed = DateTime.Now - startTime;
+            Logger.Write($"Elapsed time during search was {elapsed.ToReadableTime()}");
+            Logger.Write($"Total processor use was {AppDomain.CurrentDomain.MonitoringTotalProcessorTime.ToReadableTime()}");
+            #endregion
+
+            #region ◁ Results ▷
+            Console.WriteLine($"[{LogLevel.Notice}] Log file —▷ {Logger.GetLogName()}");
+            Console.WriteLine($"[{LogLevel.Notice}] Process completed {(_noIssue ? "without issue" : "with issues")}");
+
+            if (_noIssue)
+            {
+                // Only save settings if there were no problems.
+                ConfigManager.Set(Keys.LastCount, value: _totalMatchCount);
+                ConfigManager.Set(Keys.LastUse, value: DateTime.Now);
+                ConfigManager.Set(Keys.FirstRun, value: false);
+                ConfigManager.Set(Keys.TruncateLength, value: truncate);
+                if (args.Length > 0)
+                    ConfigManager.Set(Keys.LastCommand, string.Join(" ", args));
+                Console.WriteLine();
+                Thread.Sleep(3000);
+            }
+            else
+            {
+                Console.WriteLine($"[{LogLevel.Notice}] Press any key to exit");
+                var key = Console.ReadKey(true).Key;
+            }
+            #endregion
+        }
+
+        #region ◁ Events ▷
+        static void OnConfigError(object sender, Exception e)
+        {
+            Logger.Write($"[{LogLevel.Error}] ConfigManager error: {e.Message}");
+        }
+
+        static void OnStopwatchEvent(object sender, string e)
+        {
+            Logger.Write($"{e}", "", LogLevel.Debug);
+        }
+        #endregion
+
+        #region ◁ Helpers ▷
+        /// <summary>
+        /// Gets the assemblies loaded in the current application domain.
+        /// </summary>
+        static void LogDomainAssemblies()
+        {
+            try
+            {
+                Assembly[] assemblies = Thread.GetDomain().GetAssemblies();
+                foreach (var assem in assemblies)
+                {
+                    var name = assem.GetName().FullName;
+                    var pkt = assem.GetName().GetPublicKeyToken();
+                    if (pkt != null && pkt.Length > 0) // ignore null/empty key tokens
+                    {
+                        Logger.Write($"{name}","", LogLevel.Info);
+                    }
+                }
+            }
+            catch (Exception) { }
+        }
+
+        /// <summary>
+        /// This is an alternative way to set command line arguments as part of a dictionary.
+        /// </summary>
+        static void TestAlternateFlagSetting()
+        {
+            // Sample dictionary to hold app flags.
+            var dict = new Dictionary<string, bool>
+            {
+                { "debug",   false }, { "locate",   false },
+                { "term",    false }, { "drive",    false },
+                { "match",   false }, { "pattern",  false },
+                { "threads", false }, { "percent",  false }
+            };
+
+            Dictionary<string, bool> argResults = SetCommandArgs(dict);
+
+            Console.WriteLine($"[{LogLevel.Debug}] Arguments: {string.Join(", ", argResults.Select(kvp => $"{kvp.Key}={kvp.Value}"))}");
+        }
+
+        /// <summary>
+        /// Modifies the provided dictionary with command line arguments that were matched.
+        /// Calls <see cref="Environment.GetCommandLineArgs"/> to get the current command line arguments.
+        /// </summary>
+        /// <param name="kvps">original <see cref="Dictionary{TKey, TValue}"/></param>
+        /// <param name="preamble">optional prefix to use for matching arguments</param>
+        /// <returns>modified <see cref="Dictionary{TKey, TValue}"/></returns>
+        /// <remarks>Arguments will be tested with and without <paramref name="preamble"/></remarks>
+        static Dictionary<string, bool> SetCommandArgs(Dictionary<string, bool> kvps, string preamble = "--")
+        {
+            string[] envArgs = Environment.GetCommandLineArgs();
+            
+            // Clone original dictionary to avoid modifying it directly.
+            var modified = new Dictionary<string, bool>(kvps);
+            foreach (var env in kvps)
+            {
+                modified[env.Key] = envArgs.Where(arg => arg.ToLower().Contains($"{env.Key}") || arg.ToLower().Contains($"{preamble}{env.Key}")).Count() > 0;
+            }
+           
+            return modified;
+        }
+        #endregion
+    }
+}
