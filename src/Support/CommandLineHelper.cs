@@ -198,6 +198,44 @@ namespace csfind
         }
 
         /// <summary>
+        /// Convenience method to return only the first "--months" value or empty.
+        /// </summary>
+        public static string GetFirstMonthValue(string[] args)
+        {
+            foreach (var value in GetMonthValues(args))
+                return value;
+
+            return string.Empty;
+        }
+
+        /// <summary>
+        /// Scans the args for every occurrence of "--months" and returns
+        /// the argument immediately following it as a search string.
+        /// </summary>
+        /// <param name="args">The array of command-line arguments.</param>
+        /// <returns>
+        /// A list of strings provided after each "--months" switch.
+        /// If "--months" is never provided, returns an empty list.
+        /// </returns>
+        public static List<string> GetMonthValues(string[] args)
+        {
+            if (args == null)
+                return new List<string>();
+
+            var matches = new List<string>();
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (args[i] == $"{preamble}months" && i + 1 < args.Length)
+                {
+                    matches.Add(args[i + 1]);
+                    i++; // don't re-parse it
+                }
+            }
+            return matches;
+        }
+
+
+        /// <summary>
         /// Splits the raw command line into tokens. 
         /// A token is either:
         ///   • a quoted string including its quotes (e.g. "hello there")

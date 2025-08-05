@@ -20,6 +20,8 @@
     - Use `--threads <value>` to specify total thread count term
     - Use `--percent <value>` to specify the amount of terms that need to be discovered for a positive hit
     - Use `--locate` to enable file search mode (files will not be opened and parsed, only matched based on the given pattern)
+    - Use `--months <value>` to specify the age of interest when using locate mode
+        - Only files that have been modified within the last `<value>` months will be considered
 - Multi-threading mode:
     - In the interest of time, up to 4 threads will be used during the search process.
     - This can be adjusted using the `--threads <value>` command line argument.
@@ -36,5 +38,6 @@
 
 ```bash
   csFind --locate --drive d: --pattern App.config --threads 8
-  csFind --locate --drive c:\temp --pattern Debug*.log --threads 8
+  csFind --locate --drive x:\temp --pattern Debug*.log --threads 8
+  csFind --locate --drive c: --pattern *guide.docx --months 12
 ```

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -36,6 +37,7 @@ namespace csfind
         static string _patternText = "*.config";
         static int _totalMatchCount = 0;
         static int _numThreads = 4;
+        static int _numMonths = 0;
         static double _mtsPercent = 0.8; // 80% required for multi-term search
         static CancellationTokenSource _cts;
         static List<string> _terms = new List<string>();
@@ -45,11 +47,9 @@ namespace csfind
         {
             #region ◁ Init ▷
             AppDomain.MonitoringIsEnabled = true;
-
             Console.OutputEncoding = Encoding.UTF8;
-            Console.ForegroundColor = ConsoleColor.Gray;
-
             ConfigManager.OnError += OnConfigError;
+
             var timeout = ConfigManager.Get<double>(Keys.TimeoutInMinutes, defaultValue: 120);
             var truncate = ConfigManager.Get<int>(Keys.TruncateLength, defaultValue: 100);
             _cts = new CancellationTokenSource(TimeSpan.FromMinutes(timeout));
@@ -60,16 +60,23 @@ namespace csfind
             if (Debugger.IsAttached)
             {
                 ConfigManager.Set(Keys.LogLevel, LogLevel.Debug);
-                Console.WriteLine($"[{LogLevel.Info}] You have {Environment.ProcessorCount} thread cores available");
+                Console.WriteLine($"[{LogLevel.Init}] You have {Environment.ProcessorCount} thread cores available");
             }
             else
             {
                 ConfigManager.Set(Keys.LogLevel, LogLevel.Info);
             }
-            Logger.Write(Extensions.ReflectAssemblyFramework(typeof(Program)));
+            Logger.Write(Extensions.ReflectAssemblyFramework(typeof(Program)), "", LogLevel.Init);
             #endregion
 
             #region ◁ Domain ▷
+            var framework = AppDomain.CurrentDomain.SetupInformation.TargetFrameworkName; // ".NETFramework,Version=v4.8"
+            var appbase = AppDomain.CurrentDomain.SetupInformation.ApplicationBase;
+            var cfgfile = AppDomain.CurrentDomain.SetupInformation.ConfigurationFile;
+            var cachepath = AppDomain.CurrentDomain.SetupInformation.CachePath ?? Path.GetTempPath();
+            //AppDomain.CurrentDomain.SetupInformation.AppDomainInitializer += (string[] arguments) => { Console.WriteLine($"[AppDomainInitializer] Length={arguments.Length}"); };
+            //AppDomain.CurrentDomain.ProcessExit += (sender, e) => { Logger.Write($"Process exited at {DateTime.Now.ToString("MM/dd/yyyy hh:mm:ss.fff tt", CultureInfo.InvariantCulture)}"); };
+
             Console.CancelKeyPress += (s, e) =>
             {
                 e.Cancel = true;
@@ -79,11 +86,13 @@ namespace csfind
                 Console.ForegroundColor = ConsoleColor.Gray;
                 Thread.Sleep(2000);
             };
+
             AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
             {
-                Console.WriteLine($"\r\nUnhandledException: {e.ExceptionObject}");
+                Logger.Write($"\r\nUnhandledException: {(e.ExceptionObject as Exception)}", "", LogLevel.Critical);
                 _noIssue = false;
             };
+
             AppDomain.CurrentDomain.FirstChanceException += (sender, e) =>
             {
                 if (e.Exception != null && // Ignore common exceptions that are not critical
@@ -102,9 +111,10 @@ namespace csfind
                 {
                     Console.WriteLine($"\r\nFirstChanceException: {e.Exception.Message}");
                     Thread.Sleep(3000);
-                    return;
+                    ForceExitNow(true);
                 }
             };
+
             var trust = AppDomain.CurrentDomain.ApplicationTrust;
             if (!trust.IsApplicationTrustedToRun)
             {
@@ -115,6 +125,7 @@ namespace csfind
                 Console.WriteLine("IsApplicationTrustedToRun? " + trust.IsApplicationTrustedToRun);
                 Console.WriteLine("Permissions granted: " + trust.DefaultGrantSet.PermissionSet.ToXml());
             }
+
             LogDomainAssemblies();
             #endregion
 
@@ -210,6 +221,23 @@ namespace csfind
                     Logger.Write($"Your processor count is {Environment.ProcessorCount}, it's recommended that you don't exceed {Environment.ProcessorCount}.", "", LogLevel.Warning);
             }
 
+            if (_locateMode)
+            {
+                // Check for passed month value
+                string firstMonth = CommandLineHelper.GetFirstMonthValue(args);
+                if (string.IsNullOrWhiteSpace(firstMonth))
+                {
+                    Console.WriteLine($"[{LogLevel.Notice}] You can also supply a month count value. Use {CommandLineHelper.preamble}months <value> to specify the age to use during a search.");
+                }
+                else
+                {
+                    if (!int.TryParse(firstMonth, out _numMonths))
+                        Logger.Write($"Could not convert {firstMonth} into a month count.", "", LogLevel.Warning);
+                    else if (_numMonths < 0)
+                        _numMonths = 0;
+                }
+            }
+
             if (!_locateMode)
             {
                 // Check for passed % value
@@ -249,7 +277,7 @@ namespace csfind
                 Logger.Write($"Searching with {_numThreads} threads ");
                 Logger.Write($"You can press <Ctrl-C> to cancel the search at any time.  Any currently collected results will be displayed. ", "", LogLevel.Notice);
 
-                var findit = new MultiThreadSearcher($"{_patternText}", maxThreads: _numThreads, verbose: true);
+                var findit = new MultiThreadSearcher($"{_patternText}", maxThreads: _numThreads, numMonths: _numMonths, verbose: true);
                 if (_debugMode) { findit.OnStopwatch += OnStopwatchEvent; }
                 var fmatches = findit.Search($"{_driveText}", _cts.Token);
                 if (fmatches.Count > 0)
@@ -298,12 +326,17 @@ namespace csfind
             var elapsed = DateTime.Now - startTime;
             Logger.Write($"Elapsed time during search was {elapsed.ToReadableTime()}");
             Logger.Write($"Total processor use was {AppDomain.CurrentDomain.MonitoringTotalProcessorTime.ToReadableTime()}");
+            Logger.Write($"Total memory use was {((ulong)Process.GetCurrentProcess().PrivateMemorySize64).ToFileSize()}");
+            Logger.Write($"Total working set was {((ulong)Process.GetCurrentProcess().WorkingSet64).ToFileSize()}");
+            //Logger.Write($"TotalProcessorTime {Process.GetCurrentProcess().TotalProcessorTime.ToReadableTime()}");
+            //Logger.Write($"UserProcessorTime {Process.GetCurrentProcess().UserProcessorTime.ToReadableTime()}");
+            //Logger.Write($"Survived memory size {((ulong)AppDomain.CurrentDomain.MonitoringSurvivedMemorySize).ToFileSize()}");
+            //Logger.Write($"Privileged processor time {System.Diagnostics.Process.GetCurrentProcess().PrivilegedProcessorTime.ToReadableTime()}");
             #endregion
 
             #region ◁ Results ▷
             Console.WriteLine($"[{LogLevel.Notice}] Log file —▷ {Logger.GetLogName()}");
             Console.WriteLine($"[{LogLevel.Notice}] Process completed {(_noIssue ? "without issue" : "with issues")}");
-
             if (_noIssue)
             {
                 // Only save settings if there were no problems.
@@ -338,7 +371,7 @@ namespace csfind
 
         #region ◁ Helpers ▷
         /// <summary>
-        /// Gets the assemblies loaded in the current application domain.
+        /// Gets the assemblies loaded in the current execution context of the application domain.
         /// </summary>
         static void LogDomainAssemblies()
         {
@@ -349,9 +382,9 @@ namespace csfind
                 {
                     var name = assem.GetName().FullName;
                     var pkt = assem.GetName().GetPublicKeyToken();
-                    if (pkt != null && pkt.Length > 0) // ignore null/empty key tokens
+                    if (pkt != null && pkt.Length > 0) // ignore null/empty keys
                     {
-                        Logger.Write($"{name}","", LogLevel.Info);
+                        Logger.Write($"Loaded assembly: {name}","", LogLevel.Init);
                     }
                 }
             }
@@ -397,6 +430,14 @@ namespace csfind
             }
            
             return modified;
+        }
+
+        static void ForceExitNow(bool useEnvironment = false)
+        {
+            if (useEnvironment)
+                Environment.Exit(0);
+            else
+                Process.GetCurrentProcess().Kill();
         }
         #endregion
     }

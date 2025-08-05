@@ -6,7 +6,7 @@ using System.Text;
 
 namespace csfind
 {
-    public enum LogLevel { Debug, Info, Warning, Error, Critical, Match, Notice }
+    public enum LogLevel { Debug, Init, Info, Warning, Error, Critical, Match, Notice }
 
     public static class Logger
     {
@@ -16,6 +16,8 @@ namespace csfind
         {
             try
             {
+                //var fn = System.IO.Path.GetFileNameWithoutExtension(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName);
+
                 if (string.IsNullOrEmpty(path))
                     _path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Results.log");
                 else
@@ -27,6 +29,7 @@ namespace csfind
                     ConsoleColor previous = Console.ForegroundColor;
                     switch (level)
                     {
+                        case LogLevel.Init:
                         case LogLevel.Debug: Console.ForegroundColor = ConsoleColor.DarkGray; break;
                         case LogLevel.Notice: Console.ForegroundColor = ConsoleColor.Cyan; break;
                         case LogLevel.Match: Console.ForegroundColor = ConsoleColor.Green; break;

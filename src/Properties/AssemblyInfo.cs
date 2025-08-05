@@ -22,6 +22,7 @@ using System.Security;
 [assembly: AssemblyInformationalVersion("1.0.0-beta")] // a.k.a. "product version"
 
 #region [Uncommon Attributes]
+[assembly: AssemblyFlags(AssemblyNameFlags.PublicKey | AssemblyNameFlags.EnableJITcompileOptimizer | AssemblyNameFlags.EnableJITcompileTracking)]
 
 // Wrap non-Exception throws in a System.Runtime.CompilerServices.RuntimeWrappedException.
 // Ensures that throwing a non-Exception type (e.g., an integer) still results in a catchable exception object.
@@ -31,14 +32,11 @@ using System.Security;
 // Lets you attach arbitrary key/value pairs to your assembly’s metadata.
 // Can be read at runtime via reflection GetCustomAttributes<AssemblyMetadataAttribute>().
 // Handy for linking CI build numbers, source branches, or proprietary tags.
-[assembly: AssemblyMetadata("RepositoryUrl", "https://github.com/GuildOfCalamity")]
+[assembly: AssemblyMetadata("RepositoryUrl", "https://github.com/GuildOfCalamity/csFind")]
 [assembly: AssemblyMetadata("RepositoryType", "git")]
 
 // Turn off JIT optimizations and enable edit-and-continue (use with debug mode only).
 [assembly: Debuggable(DebuggableAttribute.DebuggingModes.Default | DebuggableAttribute.DebuggingModes.DisableOptimizations | DebuggableAttribute.DebuggingModes.EnableEditAndContinue)]
-
-
-[assembly: AssemblyFlags(AssemblyNameFlags.PublicKey | AssemblyNameFlags.EnableJITcompileOptimizer | AssemblyNameFlags.EnableJITcompileTracking)]
 
 // Selects the code-access security model (Level1 ≈ .NET 2.0, Level2 ≈ .NET 4.x).
 // SkipVerificationInFullTrust lets fully trusted callers bypass certain checks.

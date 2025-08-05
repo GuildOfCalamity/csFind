@@ -21,6 +21,7 @@ namespace csfind
         int _activeThreads = 0;
         int _totalDirectories = 0;
         readonly int _maxThreads;
+        readonly int _numMonths;
         readonly string _filePattern;
         readonly Timer _timer;
         readonly bool _verbose;
@@ -36,10 +37,11 @@ namespace csfind
         /// <param name="filePattern">the file pattern to match, e.g. "web.config"</param>
         /// <param name="maxThreads">the maximum amount of threads to create</param>
         /// <param name="verbose">if <c>true</c> a timer will report the current status of the search every 6 seconds</param>
-        public MultiThreadSearcher(string filePattern, int maxThreads = 4, bool verbose = false)
+        public MultiThreadSearcher(string filePattern, int maxThreads = 4, int numMonths = 0, bool verbose = false)
         {
             _filePattern = filePattern;
             _maxThreads = maxThreads;
+            _numMonths = numMonths;
             _verbose = verbose;
 
             if (_verbose)
@@ -47,8 +49,8 @@ namespace csfind
                 string formatReport = "ActiveThreads… {0,-4} QueuedDirectories… {1,-8} MatchedFiles… {2,-8}"; //negative left-justifies, while positive right-justifies
                 _timer = new Timer((state) =>
                 {
-                    Console.WriteLine($"  {String.Format(formatReport, _activeThreads, _directoryQueue.Count, _matchedFiles.Count)}");
-                }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(6));
+                    Console.Write($"  {String.Format(formatReport, _activeThreads, _directoryQueue.Count, _matchedFiles.Count)} \r");
+                }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5));
             }
         }
 
@@ -77,7 +79,10 @@ namespace csfind
                 thread.Join();
 
             if (_verbose)
+            {
                 _timer?.Dispose();
+                Console.WriteLine();
+            }
 
             return _matchedFiles.ToList();
         }
@@ -123,7 +128,18 @@ namespace csfind
                     if (file.EndsWith("Results.log", StringComparison.OrdinalIgnoreCase))
                         continue; // don't self-reference
 
-                    _matchedFiles.Add(file);
+                    if (_numMonths > 0)
+                    {
+                        var threshold = DateTime.Now.AddMonths(-_numMonths);
+                        if (new FileInfo(file).LastWriteTime >= threshold)
+                            _matchedFiles.Add(file);
+                    }
+                    else
+                        _matchedFiles.Add(file);
+
+                    // TODO: Add date matching parameter instead of hard-coding
+                    //if (new FileInfo(file).LastWriteTime.IsBetween(new DateTime(2022, 1, 1), DateTime.Now))
+                    //    _matchedFiles.Add(file);
                 }
             }
             catch (UnauthorizedAccessException) { }
@@ -199,8 +215,8 @@ namespace csfind
                 string formatReport = "ActiveThreads… {0,-4} QueuedDirectories… {1,-8} Matches… {2,-8}"; //negative left-justifies, while positive right-justifies
                 _timer = new Timer((state) =>
                 {
-                    Console.WriteLine($"  {String.Format(formatReport, _activeThreads, _directoryQueue.Count, _matches.Count)}");
-                }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(6));
+                    Console.Write($"  {String.Format(formatReport, _activeThreads, _directoryQueue.Count, _matches.Count)} \r");
+                }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5));
             }
         }
 
@@ -225,7 +241,10 @@ namespace csfind
             catch (OperationCanceledException) { } // Handle cancellations gracefully
 
             if (_verbose)
+            {
                 _timer?.Dispose();
+                Console.WriteLine();
+            }
 
             return _matches.ToList();
         }

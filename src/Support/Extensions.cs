@@ -216,6 +216,56 @@ namespace csfind
             return Math.Abs(value) >= 1d - Epsilon && Math.Abs(value) <= 1d + Epsilon;
         }
 
+        public static string GetLastChars(string input, int length, char pad = ' ')
+        {
+            if (string.IsNullOrEmpty(input))
+                return string.Empty;
+            else if (input.Length >= length)
+                return input.Substring(input.Length - length, length);
+            else if (pad.Equals(' '))
+                return input;
+            else
+                return input.PadLeft(length, pad);
+        }
+
+        /// <summary>
+        /// Use ICMP to determine if the system has Internet access.
+        /// </summary>
+        /// <returns><c>true</c> if Internet accessible, <c>false</c> otherwise</returns>
+        public static bool HasInternetAccess()
+        {
+            bool result = false;
+
+            var proc = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "ping",
+                    Arguments = "-n 1 8.8.8.8",
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false
+                },
+                EnableRaisingEvents = true,
+                //SynchronizingObject = syncInvoker
+            };
+
+            proc.OutputDataReceived += (s, e) =>
+            {
+                if (!string.IsNullOrWhiteSpace(e.Data))
+                {
+                    //Console.WriteLine($"[{Thread.CurrentThread.ManagedThreadId}] {e.Data}");
+                    if (e.Data.Contains("Reply from 8.8.8.8"))
+                        result = true;
+                    //else if (e.Data.Contains("Request timed out") || e.Data.Contains("Destination host unreachable"))
+                    //    result = false;
+                }
+            };
+            proc.Start();
+            proc.BeginOutputReadLine();
+            proc.WaitForExit();
+            return result;
+        }
+
         /// <summary>
         /// Home-brew parallel invoke that will not block while actions run.
         /// </summary>
@@ -1120,5 +1170,23 @@ namespace csfind
             }
             return results;
         }
+
+        public static void DumpProcessModuleCollection()
+        {
+            string self = System.Reflection.Assembly.GetExecutingAssembly().GetName().Name + ".exe";
+            System.Diagnostics.ProcessModuleCollection pmc = System.Diagnostics.Process.GetCurrentProcess().Modules;
+            IOrderedEnumerable<ProcessModule> pmQuery = pmc
+                .OfType<ProcessModule>()
+                .Where(pt => pt.ModuleMemorySize > 0)
+                .OrderBy(o => o.ModuleName);
+            foreach (var item in pmQuery)
+            {
+                if (!item.ModuleName.Contains($"{self}"))
+                    Console.WriteLine($"> Module Name: {item.ModuleName}, v{item.FileVersionInfo.FileVersion}");
+                try { item.Dispose(); }
+                catch { }
+            }
+        }
+
     }
 }
