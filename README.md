@@ -12,6 +12,7 @@
 - Initial release of **csFind** utility.
     - This utility searches all `files` in the `drive` that contain a matching `term`
     - Results are logged and output to the console
+    - This utility does not employ indexing
 - Optional command line arguments:
     - Use `--term <value>` to specify a match term (text to search for inside files)
         - You can specify multiple terms using multiple `--term` arguments
@@ -25,7 +26,7 @@
 - Multi-threading mode:
     - In the interest of time, up to 4 threads will be used during the search process.
     - This can be adjusted using the `--threads <value>` command line argument.
-    - You don't want to go crazy with the thread count; in most cases throwing more threads at a problem does not make it better, e.g. using 50 threads may cause the process to finish slightly faster but will bring the client machine to its knees. 4 to 8 threads is adequate for most systems.
+    - You don't want to go crazy with the thread count; in most cases throwing more threads at a problem does not make it better, e.g. using 50 threads may cause the process to finish slightly faster but will bring the client machine to its knees. 2 to 8 threads is adequate for most systems.
 
 > Multi-term search mode (similar to Grep)
 
@@ -37,7 +38,7 @@
 > Locate mode examples (similar to Windows Explorer file search):
 
 ```bash
-  csFind --locate --drive d: --pattern App.config --threads 8
-  csFind --locate --drive x:\temp --pattern Debug*.log --threads 8
-  csFind --locate --drive c: --pattern *guide.docx --months 12
+  csFind --locate --drive d: --pattern app.config --threads 8
+  csFind --locate --drive x:\temp --pattern debug*.log --threads 2
+  csFind --locate --drive c: --pattern *guide.docx --threads 5 --months 24
 ```

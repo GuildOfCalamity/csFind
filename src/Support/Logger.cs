@@ -36,6 +36,7 @@ namespace csfind
                         case LogLevel.Warning: Console.ForegroundColor = ConsoleColor.DarkYellow; break;
                         case LogLevel.Error: Console.ForegroundColor = ConsoleColor.DarkRed; break;
                         case LogLevel.Critical: Console.ForegroundColor = ConsoleColor.Red; break;
+                        case LogLevel.Info: Console.ForegroundColor = ConsoleColor.Gray; break;
                     }
                     Console.WriteLine($"[{level}] {message}");
                     Console.ForegroundColor = previous;

@@ -460,14 +460,15 @@ namespace csfind
         public static string ToReadableTime(this TimeSpan value)
         {
             double delta = value.TotalSeconds;
+            if (delta < 1) { return "less than one second"; }
             if (delta < 60) { return value.Seconds == 1 ? "one second" : value.Seconds + " seconds"; }
-            if (delta < 120) { return "a minute"; }
+            if (delta < 120) { return "a minute"; }                  // 2 * 60
             if (delta < 3000) { return value.Minutes + " minutes"; } // 50 * 60
-            if (delta < 5400) { return "an hour"; } // 90 * 60
-            if (delta < 86400) { return value.Hours + " hours"; } // 24 * 60 * 60
-            if (delta < 172800) { return "one day"; } // 48 * 60 * 60
-            if (delta < 2592000) { return value.Days + " days"; } // 30 * 24 * 60 * 60
-            if (delta < 31104000) // 12 * 30 * 24 * 60 * 60
+            if (delta < 5400) { return "an hour"; }                  // 90 * 60
+            if (delta < 86400) { return value.Hours + " hours"; }    // 24 * 60 * 60
+            if (delta < 172800) { return "one day"; }                // 48 * 60 * 60
+            if (delta < 2592000) { return value.Days + " days"; }    // 30 * 24 * 60 * 60
+            if (delta < 31104000)                                    // 12 * 30 * 24 * 60 * 60
             {
                 int months = Convert.ToInt32(Math.Floor((double)value.Days / 30));
                 return months <= 1 ? "one month" : months + " months";

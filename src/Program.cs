@@ -84,7 +84,9 @@ namespace csfind
                 Console.WriteLine();
                 Logger.Write("▷ Process canceled by user! ", "", LogLevel.Warning);
                 Console.ForegroundColor = ConsoleColor.Gray;
-                Thread.Sleep(2000);
+                Thread.Sleep(1000);
+                if (args.Length == 0)
+                    ForceExitNow(true);
             };
 
             AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
@@ -103,13 +105,13 @@ namespace csfind
                    !e.Exception.Message.StartsWith("The operation was canceled") &&
                    !e.Exception.Message.StartsWith("Access to the path"))
                 {
-                    Console.WriteLine($"\r\nFirstChanceException: {e.Exception.Message}");
+                    Logger.Write($"\r\nFirstChanceException: {e.Exception.Message}", level: LogLevel.Error);
                     _noIssue = false;
                 }
                 else if (e.Exception != null &&
                     e.Exception.Message.StartsWith("Second path fragment must not be a drive or UNC name"))
                 {
-                    Console.WriteLine($"\r\nFirstChanceException: {e.Exception.Message}");
+                    Logger.Write($"\r\nFirstChanceException: {e.Exception.Message}", level: LogLevel.Error);
                     Thread.Sleep(3000);
                     ForceExitNow(true);
                 }
@@ -130,25 +132,10 @@ namespace csfind
             #endregion
 
             #region ◁ Parse command line ▷
-            // Test for basic mode flags first.
-            Environment.GetCommandLineArgs().Skip(1).ToList().ForEach(arg =>
-            {
-                if (arg.Equals($"{CommandLineHelper.preamble}debug", StringComparison.CurrentCultureIgnoreCase))
-                {
-                    _debugMode = true;
-                    Logger.Write("Debug mode enabled", "", LogLevel.Info);
-                }
-                if (arg.Equals($"{CommandLineHelper.preamble}locate", StringComparison.CurrentCultureIgnoreCase))
-                {
-                    _locateMode = true;
-                    Logger.Write("Locate mode enabled", "", LogLevel.Info);
-                }
-            });
-
             // Test for no arguments.
             if (args.Length == 0 && !string.IsNullOrEmpty(lastCmd))
             {
-                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.ForegroundColor = ConsoleColor.Gray;
                 Console.WriteLine($"[{LogLevel.Info}] LastCommand ▷ {lastCmd}");
                 Console.ForegroundColor = ConsoleColor.DarkCyan;
                 Console.Write($"[{LogLevel.Notice}] No arguments were provided, would you like to re-use your last command? [Y/N] ");
@@ -156,8 +143,31 @@ namespace csfind
                 if (Console.ReadKey(false).Key == ConsoleKey.Y)
                 {
                     args = lastCmd.Split(' ');
+                    args.ForEach(a => 
+                    {
+                        if (a.Equals($"{CommandLineHelper.preamble}debug", StringComparison.CurrentCultureIgnoreCase))
+                            _debugMode = true;
+                        if (a.Equals($"{CommandLineHelper.preamble}locate", StringComparison.CurrentCultureIgnoreCase))
+                            _locateMode = true;
+                    });
                 }
                 Console.WriteLine();
+            }
+            else // Test for basic flag modes.
+            {
+                Environment.GetCommandLineArgs().Skip(1).ToList().ForEach(arg =>
+                {
+                    if (arg.Equals($"{CommandLineHelper.preamble}debug", StringComparison.CurrentCultureIgnoreCase))
+                    {
+                        _debugMode = true;
+                        Logger.Write("Debug mode enabled", "", LogLevel.Info);
+                    }
+                    if (arg.Equals($"{CommandLineHelper.preamble}locate", StringComparison.CurrentCultureIgnoreCase))
+                    {
+                        _locateMode = true;
+                        Logger.Write("Locate mode enabled", "", LogLevel.Info);
+                    }
+                });
             }
 
             _terms = CommandLineHelper.GetTermValues(args);
@@ -172,7 +182,7 @@ namespace csfind
                 Logger.Write("MultiTermSearch mode will be ignored because Locate mode was supplied", "", LogLevel.Warning);
                 Logger.Write($"If you wish to use MultiTermSearch mode then remove the \"{CommandLineHelper.preamble}locate\" switch", "", LogLevel.Notice);
             }
-            else if (!_locateMode)
+            else if (_terms.Count == 0 && !_locateMode)
             {
                 Logger.Write($"You must supply \"{CommandLineHelper.preamble}term\" values for multi-term search mode, or supply \"{CommandLineHelper.preamble}locate\" for file finding mode", "", LogLevel.Warning);
             }
@@ -323,6 +333,9 @@ namespace csfind
             {
                 Logger.Write($"You must specify at least one {CommandLineHelper.preamble}term argument", "", LogLevel.Warning);
             }
+            #endregion
+
+            #region ◁ Results ▷
             var elapsed = DateTime.Now - startTime;
             Logger.Write($"Elapsed time during search was {elapsed.ToReadableTime()}");
             Logger.Write($"Total processor use was {AppDomain.CurrentDomain.MonitoringTotalProcessorTime.ToReadableTime()}");
@@ -332,9 +345,6 @@ namespace csfind
             //Logger.Write($"UserProcessorTime {Process.GetCurrentProcess().UserProcessorTime.ToReadableTime()}");
             //Logger.Write($"Survived memory size {((ulong)AppDomain.CurrentDomain.MonitoringSurvivedMemorySize).ToFileSize()}");
             //Logger.Write($"Privileged processor time {System.Diagnostics.Process.GetCurrentProcess().PrivilegedProcessorTime.ToReadableTime()}");
-            #endregion
-
-            #region ◁ Results ▷
             Console.WriteLine($"[{LogLevel.Notice}] Log file —▷ {Logger.GetLogName()}");
             Console.WriteLine($"[{LogLevel.Notice}] Process completed {(_noIssue ? "without issue" : "with issues")}");
             if (_noIssue)
