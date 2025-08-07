@@ -10,18 +10,26 @@ namespace csfind
 
     public static class Logger
     {
+        static string _fileName = "Results.log";
         static string _path = string.Empty;
 
-        internal static bool Write(string message, string path = "", LogLevel level = LogLevel.Info, bool console = true)
+        internal static bool Write(string message, 
+            string path = "", 
+            LogLevel level = LogLevel.Info, 
+            bool console = true)
         {
             try
             {
-                //var fn = System.IO.Path.GetFileNameWithoutExtension(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName);
-
-                if (string.IsNullOrEmpty(path))
-                    _path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Results.log");
-                else
+                // Set the path on first write if not given.
+                if (string.IsNullOrEmpty(path) && string.IsNullOrEmpty(_path))
+                {
+                    //_path = $"{System.IO.Path.GetFileNameWithoutExtension(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName)}.log"
+                    _path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, _fileName);
+                }
+                else if(!string.IsNullOrEmpty(path) && string.IsNullOrEmpty(_path))
+                {
                     _path = path;
+                }
 
                 #region [console output]
                 if (console)
@@ -59,7 +67,7 @@ namespace csfind
         internal static string GetLogName()
         {
             if (string.IsNullOrEmpty(_path))
-                return "Path has not been set.";
+                return _path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, _fileName);
             else
                 return _path;
         }

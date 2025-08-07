@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 
 namespace csfind
 {
+    #region ◁ File Searcher ▷
     /// <summary>
     /// Utilizes multiple <see cref="System.Threading.Thread"/>s to search for files matching a specified pattern.
     /// Employs a thread-safe queue to manage directories and a concurrent bag to store matched files.
@@ -27,7 +28,8 @@ namespace csfind
         readonly bool _verbose;
         readonly ConcurrentQueue<string> _directoryQueue = new ConcurrentQueue<string>();
         readonly ConcurrentBag<string> _matchedFiles = new ConcurrentBag<string>();
-        public event EventHandler<string> OnStopwatch;
+        readonly ConcurrentBag<MetricResult> _metrics = new ConcurrentBag<MetricResult>();
+        //public event EventHandler<string> OnStopwatch;
         #endregion
 
         #region ◁ Public ▷
@@ -88,6 +90,10 @@ namespace csfind
         }
 
         public int GetTotalDirectoryCount() => _totalDirectories;
+
+        public int GetActiveThreads() => _activeThreads;
+
+        public List<MetricResult> GetMetrics() => _metrics.ToList();
         #endregion
 
         #region ◁ Private ▷
@@ -165,7 +171,7 @@ namespace csfind
             catch (Exception) { }
 
             var elapsed = DateTime.Now - startTime;
-            OnStopwatch?.Invoke(null, $"{elapsed.ToReadableTime()} elapsed time for directory '{dir}' ");
+            _metrics.Add(new MetricResult(dir, elapsed));
         }
         #endregion
 
@@ -179,8 +185,9 @@ namespace csfind
         //    Console.WriteLine($"\n⇒ Found {matches.Count} total matches");
         //}
     }
+    #endregion
 
-    #region ◁ TermSearcher ▷
+    #region ◁ Term Searcher ▷
     /// <summary>
     /// Similar to <see cref="MultiTermSearcher"/>, but <see cref="Task"/>-based, and includes the use of <see cref="MatchResult"/> objects.
     /// </summary>
@@ -189,6 +196,7 @@ namespace csfind
         #region ◁ Local Scope ▷
         readonly ConcurrentQueue<string> _directoryQueue = new ConcurrentQueue<string>();
         readonly ConcurrentBag<MatchResult> _matches = new ConcurrentBag<MatchResult>();
+        readonly ConcurrentBag<MetricResult> _metrics = new ConcurrentBag<MetricResult>();
         readonly string _filePattern;
         readonly string _contentKeyword;
         readonly List<string> _multiTermMatch;
@@ -197,7 +205,7 @@ namespace csfind
         readonly Timer _timer;
         readonly bool _verbose = false;
         int _activeThreads = 0;
-        public event EventHandler<string> OnStopwatch;
+        //public event EventHandler<string> OnStopwatch;
         #endregion
 
         #region ◁ Public ▷
@@ -248,6 +256,10 @@ namespace csfind
 
             return _matches.ToList();
         }
+
+        public List<MetricResult> GetMetrics() => _metrics.ToList();
+
+        public int GetActiveThreads() => _activeThreads;
         #endregion
 
         #region ◁ Private ▷
@@ -298,7 +310,7 @@ namespace csfind
             }
 
             var elapsed = DateTime.Now - startTime;
-            OnStopwatch?.Invoke(null, $"{elapsed.ToReadableTime()} elapsed time for directory '{dir}' ");
+            _metrics.Add(new MetricResult(dir, elapsed));
         }
 
         void ProcessFile(string filePath, CancellationToken token)
@@ -342,7 +354,9 @@ namespace csfind
         }
         #endregion
     }
+    #endregion
 
+    #region ◁ Support Models ▷
     /// <summary>
     /// Data object for <see cref="MultiTermSearcher"/>.
     /// </summary>
@@ -353,13 +367,27 @@ namespace csfind
         public string LineData { get; }
         public MatchResult(string filePath, int lineNumber, string lineData)
         {
-            FilePath = filePath;
             LineNumber = lineNumber;
-            LineData = lineData;
+            FilePath = filePath ?? string.Empty;
+            LineData = lineData ?? string.Empty;
         }
         public override string ToString() => $"{FilePath}\t[Line {LineNumber}]\t{LineData}";
     }
 
+    /// <summary>
+    /// Data object for <see cref="MultiTermSearcher"/>.
+    /// </summary>
+    public class MetricResult
+    {
+        public string Path { get; }
+        public TimeSpan Elapsed { get; }
+        public MetricResult(string path, TimeSpan elapsed)
+        {
+            Path = path ?? string.Empty;
+            Elapsed = elapsed;
+        }
+        public override string ToString() => $"{Elapsed.ToReadableTime()}\t{Path}";
+    }
     #endregion
 
     /* [Regex Support]

@@ -457,10 +457,11 @@ namespace csfind
         /// </summary>
         /// <param name="value"><see cref="TimeSpan"/>the future time to compare from now</param>
         /// <returns>human friendly format</returns>
-        public static string ToReadableTime(this TimeSpan value)
+        public static string ToReadableTime(this TimeSpan value, bool reportMilliseconds = false)
         {
             double delta = value.TotalSeconds;
-            if (delta < 1) { return "less than one second"; }
+            if (delta < 1 && !reportMilliseconds) { return "less than one second"; }
+            if (delta < 1 && reportMilliseconds) { return $"{value.TotalMilliseconds:N1} milliseconds"; }
             if (delta < 60) { return value.Seconds == 1 ? "one second" : value.Seconds + " seconds"; }
             if (delta < 120) { return "a minute"; }                  // 2 * 60
             if (delta < 3000) { return value.Minutes + " minutes"; } // 50 * 60
@@ -518,6 +519,7 @@ namespace csfind
             if (delta < 0) // in the future
             {
                 delta = Math.Abs(delta);
+                if (delta < 1) { return "in less than one second"; }
                 if (delta < 60) { return Math.Abs(ts.Seconds) == 1 ? "in one second" : "in " + Math.Abs(ts.Seconds) + " seconds"; }
                 if (delta < 120) { return "in a minute"; }
                 if (delta < 3000) { return "in " + Math.Abs(ts.Minutes) + " minutes"; } // 50 * 60
@@ -535,6 +537,7 @@ namespace csfind
             }
             else // in the past
             {
+                if (delta < 1) { return "less than one second ago"; }
                 if (delta < 60) { return ts.Seconds == 1 ? "one second ago" : ts.Seconds + " seconds ago"; }
                 if (delta < 120) { return "a minute ago"; }
                 if (delta < 3000) { return ts.Minutes + " minutes ago"; } // 50 * 60
@@ -881,6 +884,43 @@ namespace csfind
         /// Multiplies the given <see cref="TimeSpan"/> by the scalar amount provided.
         /// </summary>
         public static TimeSpan Multiply(this TimeSpan timeSpan, double scalar) => new TimeSpan((long)(timeSpan.Ticks * scalar));
+
+        /// <summary>
+        /// Returns a new TimeSpan equal to the original TimeSpan divided by <paramref name="divisor"/>.
+        /// </summary>
+        /// <param name="timeSpan">The TimeSpan to divide.</param>
+        /// <param name="divisor">A positive integer to divide the TimeSpan by.</param>
+        /// <returns>A TimeSpan representing timeSpan/divisor.</returns>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown if <paramref name="divisor"/> is less than or equal to zero.</exception>
+        public static TimeSpan Divide(this TimeSpan timeSpan, int divisor)
+        {
+            if (divisor <= 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(divisor), "Divisor must be greater than zero.");
+
+            // TimeSpan.Ticks is a long (100‐ns units). Integer division truncates any remainder.
+            long newTicks = timeSpan.Ticks / divisor;
+            return TimeSpan.FromTicks(newTicks);
+        }
+
+        /// <summary>
+        /// Returns the average TimeSpan from a sequence.
+        /// Throws <see cref="InvalidOperationException"/> if the sequence is empty.
+        /// </summary>
+        public static TimeSpan Average(this IEnumerable<TimeSpan> source)
+        {
+            if (source == null)
+                return TimeSpan.Zero;
+
+            // We need at least one element to compute an average
+            long count = source.LongCount();
+            if (count == 0)
+                throw new InvalidOperationException("Sequence contains no elements");
+
+            // Average the underlying Ticks and reconstruct a TimeSpan
+            double avgTicks = source.Average(ts => ts.Ticks);
+            return TimeSpan.FromTicks(Convert.ToInt64(avgTicks));
+        }
 
         /// <summary>
         /// Gets a <see cref="DateTime"/> object representing the time until midnight.

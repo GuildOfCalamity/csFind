@@ -5,6 +5,9 @@ using System.Text.RegularExpressions;
 
 namespace csfind
 {
+    /// <summary>
+    /// TODO: The GetXxxxValue() methods can be consolidated at some point.
+    /// </summary>
     internal static class CommandLineHelper
     {
         // We'll use this prefix for all our switches.

@@ -51,8 +51,7 @@ using System.Security;
 // Controls which folders the runtime probes when you P/Invoke unmanaged DLLs.
 // Helps prevent "DLL-hijacking" security issues by narrowing the search paths.
 // Available starting in .NET Framework 4.6.1 and .NET Core.
-[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
-//[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32 | DllImportSearchPath.ApplicationDirectory)]
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)] //[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32 | DllImportSearchPath.ApplicationDirectory)]
 
 // Grants permission for partially-trusted (e.g. sandboxed) code to call into your assembly.
 // By default, only fully-trusted callers can use strong-named assemblies.

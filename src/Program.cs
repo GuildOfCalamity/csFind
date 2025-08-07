@@ -23,6 +23,8 @@ namespace csfind
         public const string TimeoutInMinutes = "TimeoutInMinutes";
         public const string LastCommand      = "LastCommand";
         public const string LogLevel         = "LogLevel";
+        public const string AppendLog        = "AppendLog";
+        public const string ShowStats        = "ShowStats";
     }
     #endregion
 
@@ -54,19 +56,17 @@ namespace csfind
             var truncate = ConfigManager.Get<int>(Keys.TruncateLength, defaultValue: 100);
             _cts = new CancellationTokenSource(TimeSpan.FromMinutes(timeout));
             var level = ConfigManager.Get<LogLevel>(Keys.LogLevel);
-            string lastCount = ConfigManager.Get(Keys.LastCount, defaultValue: "0");
+            var lastCount = ConfigManager.Get(Keys.LastCount, defaultValue: "0");
             var lastCmd = ConfigManager.Get<string>(Keys.LastCommand, defaultValue: string.Empty);
-
-            if (Debugger.IsAttached)
+            var showStats = ConfigManager.Get<bool>(Keys.ShowStats, defaultValue: true);
+            var appendLog = ConfigManager.Get<bool>(Keys.AppendLog, defaultValue: true);
+            var firstRun = ConfigManager.Get<bool>(Keys.FirstRun, defaultValue: true);
+            if (!appendLog)
             {
-                ConfigManager.Set(Keys.LogLevel, LogLevel.Debug);
-                Console.WriteLine($"[{LogLevel.Init}] You have {Environment.ProcessorCount} thread cores available");
+                try { File.Delete(Logger.GetLogName()); }
+                catch (Exception) { }
             }
-            else
-            {
-                ConfigManager.Set(Keys.LogLevel, LogLevel.Info);
-            }
-            Logger.Write(Extensions.ReflectAssemblyFramework(typeof(Program)), "", LogLevel.Init);
+            Logger.Write(Extensions.ReflectAssemblyFramework(typeof(Program)), level: LogLevel.Init);
             #endregion
 
             #region ◁ Domain ▷
@@ -82,7 +82,7 @@ namespace csfind
                 e.Cancel = true;
                 _cts?.Cancel();
                 Console.WriteLine();
-                Logger.Write("▷ Process canceled by user! ", "", LogLevel.Warning);
+                Logger.Write("▷ Process canceled by user! ", level: LogLevel.Warning);
                 Console.ForegroundColor = ConsoleColor.Gray;
                 Thread.Sleep(1000);
                 if (args.Length == 0)
@@ -91,7 +91,7 @@ namespace csfind
 
             AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
             {
-                Logger.Write($"\r\nUnhandledException: {(e.ExceptionObject as Exception)}", "", LogLevel.Critical);
+                Logger.Write($"\r\nUnhandledException: {(e.ExceptionObject as Exception)}", level: LogLevel.Critical);
                 _noIssue = false;
             };
 
@@ -129,10 +129,13 @@ namespace csfind
             }
 
             LogDomainAssemblies();
+            Logger.Write($"You have {Environment.ProcessorCount} thread cores available", level: LogLevel.Init);
+            if (firstRun)
+                Logger.Write($"Additional settings —▷ {ConfigManager.FilePath}", level: LogLevel.Notice);
             #endregion
 
-            #region ◁ Parse command line ▷
-            // Test for no arguments.
+                #region ◁ Parse command line ▷
+                // Test for no arguments.
             if (args.Length == 0 && !string.IsNullOrEmpty(lastCmd))
             {
                 Console.ForegroundColor = ConsoleColor.Gray;
@@ -160,12 +163,12 @@ namespace csfind
                     if (arg.Equals($"{CommandLineHelper.preamble}debug", StringComparison.CurrentCultureIgnoreCase))
                     {
                         _debugMode = true;
-                        Logger.Write("Debug mode enabled", "", LogLevel.Info);
+                        Logger.Write("Debug mode enabled", level: LogLevel.Info);
                     }
                     if (arg.Equals($"{CommandLineHelper.preamble}locate", StringComparison.CurrentCultureIgnoreCase))
                     {
                         _locateMode = true;
-                        Logger.Write("Locate mode enabled", "", LogLevel.Info);
+                        Logger.Write("Locate mode enabled", level: LogLevel.Info);
                     }
                 });
             }
@@ -174,17 +177,17 @@ namespace csfind
             if (_terms.Count > 0 && !_locateMode)
             {
                 _mtsMode = true;
-                Logger.Write("MultiTermSearch mode enabled", "", LogLevel.Info);
-                Logger.Write($"Using terms: {string.Join(", ", _terms)}", "", LogLevel.Info);
+                Logger.Write("MultiTermSearch mode enabled", level: LogLevel.Info);
+                Logger.Write($"Using terms: {string.Join(", ", _terms)}", level: LogLevel.Info);
             }
             else if (_terms.Count > 0 && _locateMode)
             {
-                Logger.Write("MultiTermSearch mode will be ignored because Locate mode was supplied", "", LogLevel.Warning);
-                Logger.Write($"If you wish to use MultiTermSearch mode then remove the \"{CommandLineHelper.preamble}locate\" switch", "", LogLevel.Notice);
+                Logger.Write("MultiTermSearch mode will be ignored because Locate mode was supplied", level: LogLevel.Warning);
+                Logger.Write($"If you wish to use MultiTermSearch mode then remove the \"{CommandLineHelper.preamble}locate\" switch", level: LogLevel.Notice);
             }
             else if (_terms.Count == 0 && !_locateMode)
             {
-                Logger.Write($"You must supply \"{CommandLineHelper.preamble}term\" values for multi-term search mode, or supply \"{CommandLineHelper.preamble}locate\" for file finding mode", "", LogLevel.Warning);
+                Logger.Write($"You must supply \"{CommandLineHelper.preamble}term\" values for multi-term search mode, or supply \"{CommandLineHelper.preamble}locate\" for file finding mode", level: LogLevel.Warning);
             }
 
             // Check for passed drive value
@@ -192,14 +195,14 @@ namespace csfind
             if (string.IsNullOrWhiteSpace(firstDrive))
             {
                 Console.WriteLine($"[{LogLevel.Notice}] You can also supply a drive value. Use {CommandLineHelper.preamble}drive <value> to specify a drive term.");
-                Logger.Write($"Using default drive value [{_driveText}]", "", LogLevel.Info);
+                Logger.Write($"Using default drive value [{_driveText}]", level: LogLevel.Info);
             }
             else
             {
                 _driveText = firstDrive;
                 if (!_driveText.EndsWith("\\"))
                     _driveText = $"{_driveText}\\"; // Ensure trailing backslash
-                Logger.Write($"Using drive term: {_driveText}", "", LogLevel.Info);
+                Logger.Write($"Using drive term: {_driveText}", level: LogLevel.Info);
             }
 
             // Check for passed search pattern value
@@ -207,12 +210,12 @@ namespace csfind
             if (string.IsNullOrWhiteSpace(firstPattern))
             {
                 Console.WriteLine($"[{LogLevel.Notice}] You can also supply a search pattern value. Use {CommandLineHelper.preamble}pattern <value> to specify a search pattern term.");
-                Logger.Write($"Using default search pattern value [{_patternText}]", "", LogLevel.Info);
+                Logger.Write($"Using default search pattern value [{_patternText}]", level: LogLevel.Info);
             }
             else
             {
                 _patternText = firstPattern;
-                Logger.Write($"Using pattern: {_patternText}", "", LogLevel.Info);
+                Logger.Write($"Using pattern: {_patternText}", level: LogLevel.Info);
             }
 
             // Check for passed thread value
@@ -224,11 +227,11 @@ namespace csfind
             else
             {
                 if (!int.TryParse(firstThread, out _numThreads))
-                    Logger.Write($"Could not convert {firstThread} into a thread count.", "", LogLevel.Warning);
+                    Logger.Write($"Could not convert {firstThread} into a thread count.", level: LogLevel.Warning);
                 else if (_numThreads < 1)
                     _numThreads = 1;
                 else if (_numThreads > Environment.ProcessorCount)
-                    Logger.Write($"Your processor count is {Environment.ProcessorCount}, it's recommended that you don't exceed {Environment.ProcessorCount}.", "", LogLevel.Warning);
+                    Logger.Write($"Your processor count is {Environment.ProcessorCount}, it's recommended that you don't exceed {Environment.ProcessorCount}.", level: LogLevel.Warning);
             }
 
             if (_locateMode)
@@ -242,7 +245,7 @@ namespace csfind
                 else
                 {
                     if (!int.TryParse(firstMonth, out _numMonths))
-                        Logger.Write($"Could not convert {firstMonth} into a month count.", "", LogLevel.Warning);
+                        Logger.Write($"Could not convert {firstMonth} into a month count.", level: LogLevel.Warning);
                     else if (_numMonths < 0)
                         _numMonths = 0;
                 }
@@ -259,13 +262,13 @@ namespace csfind
                 else
                 {
                     if (!double.TryParse(firstPercent, out _mtsPercent))
-                        Logger.Write($"Could not convert {firstPercent} into a percentage.", "", LogLevel.Warning);
+                        Logger.Write($"Could not convert {firstPercent} into a percentage.", level: LogLevel.Warning);
                     else if (_mtsPercent > 1.0) // 100% is the maximum
                         _mtsPercent = 1.0;
                     else if (_mtsPercent < 0.0) // 10% is the minimum
                         _mtsPercent = 0.1;
 
-                    Logger.Write($"Using percent: {_mtsPercent} ({_mtsPercent * 100}%)", "", LogLevel.Info);
+                    Logger.Write($"Using percent: {_mtsPercent} ({_mtsPercent * 100}%)", level: LogLevel.Info);
                 }
             }
             #endregion
@@ -273,7 +276,7 @@ namespace csfind
             #region ◁ Basic validation ▷
             if (!Directory.Exists(_driveText))
             {
-                Logger.Write($"Cannot find \"{_driveText}\". Try a different root folder.", "", LogLevel.Critical);
+                Logger.Write($"Cannot find \"{_driveText}\". Try a different root folder.", level: LogLevel.Critical);
                 Thread.Sleep(3000);
                 return;
             }
@@ -285,10 +288,8 @@ namespace csfind
             if (_locateMode) // file find mode
             {
                 Logger.Write($"Searching with {_numThreads} threads ");
-                Logger.Write($"You can press <Ctrl-C> to cancel the search at any time.  Any currently collected results will be displayed. ", "", LogLevel.Notice);
-
+                Logger.Write($"You can press <Ctrl-C> to cancel the search at any time.  Any currently collected results will be displayed. ", level: LogLevel.Notice);
                 var findit = new MultiThreadSearcher($"{_patternText}", maxThreads: _numThreads, numMonths: _numMonths, verbose: true);
-                if (_debugMode) { findit.OnStopwatch += OnStopwatchEvent; }
                 var fmatches = findit.Search($"{_driveText}", _cts.Token);
                 if (fmatches.Count > 0)
                 {
@@ -301,21 +302,25 @@ namespace csfind
                         Console.ForegroundColor = ConsoleColor.DarkGray;
                         Console.WriteLine($"  ▷ {file.Truncate(truncate)} ");
                         Console.ForegroundColor = ConsoleColor.Gray;
-                        Logger.Write($"Found \"{file}\"", "", LogLevel.Match, console: false);
+                        Logger.Write($"Found \"{file}\"", level: LogLevel.Match, console: false);
                     }
                 }
-                Logger.Write($"Total match count was {_totalMatchCount}", "", LogLevel.Notice);
-                if (_debugMode) { findit.OnStopwatch -= OnStopwatchEvent; }
+                Logger.Write($"Total match count was {_totalMatchCount}", level: LogLevel.Notice);
+                if (showStats)
+                {
+                    var metrics = findit.GetMetrics();
+                    if (_debugMode)
+                       Logger.Write($"Shortest traverse was {metrics.Select(o => o.Elapsed).Min().ToReadableTime(reportMilliseconds: true)}", level: LogLevel.Info);
+                    Logger.Write($"Longest traverse was {metrics.Select(o => o.Elapsed).Max().ToReadableTime(reportMilliseconds: true)} (average was {metrics.Select(o => o.Elapsed).Average().ToReadableTime(reportMilliseconds: true)})", level: LogLevel.Info);
+                }
             }
             else if (_mtsMode && _terms.Count > 0) // file parse mode
             {
                 Logger.Write($"Searching with {_numThreads} threads ");
-                Logger.Write($"You can press <Ctrl-C> to cancel the search at any time.  Any currently collected results will be displayed. ", "", LogLevel.Notice);
-
+                Logger.Write($"You can press <Ctrl-C> to cancel the search at any time.  Any currently collected results will be displayed. ", level: LogLevel.Notice);
                 var mtSearcher = new MultiTermSearcher($"{_patternText}", "", multiTermMatch: _terms, requiredMatchPercent: _mtsPercent, maxParallelism: _numThreads, verbose: true);
-                if (_debugMode) { mtSearcher.OnStopwatch += OnStopwatchEvent; }
                 var results = mtSearcher.Search($"{_driveText}", _cts.Token);
-                Logger.Write($"{results.Count} files matched {_mtsPercent * 100}% {(_mtsPercent.IsOne() ? "" : "(or more)")} of given terms", "", LogLevel.Notice);
+                Logger.Write($"{results.Count} files matched {_mtsPercent * 100}% {(_mtsPercent.IsOne() ? "" : "(or more)")} of given terms", level: LogLevel.Notice);
                 foreach (var file in results)
                 {
                     _totalMatchCount++;
@@ -327,24 +332,36 @@ namespace csfind
                     Console.ForegroundColor = ConsoleColor.Gray;
                 }
                 Console.WriteLine($"[{LogLevel.Info}] Line details in the console will be truncated to {truncate} chars max.  Full output will be saved in the log file. ");
-                if (_debugMode) { mtSearcher.OnStopwatch -= OnStopwatchEvent; }
+                if (showStats)
+                {
+                    var metrics = mtSearcher.GetMetrics();
+                    if (_debugMode)
+                        Logger.Write($"Shortest traverse was {metrics.Select(o => o.Elapsed).Min().ToReadableTime(reportMilliseconds: true)}", level: LogLevel.Info);
+                    Logger.Write($"Longest traverse was {metrics.Select(o => o.Elapsed).Max().ToReadableTime(reportMilliseconds: true)} (average was {metrics.Select(o => o.Elapsed).Average().ToReadableTime(reportMilliseconds: true)})", level: LogLevel.Info);
+                }
             }
             else if (_mtsMode && _terms.Count == 0)
             {
-                Logger.Write($"You must specify at least one {CommandLineHelper.preamble}term argument", "", LogLevel.Warning);
+                Logger.Write($"You must specify at least one {CommandLineHelper.preamble}term argument", level: LogLevel.Warning);
             }
             #endregion
 
             #region ◁ Results ▷
             var elapsed = DateTime.Now - startTime;
-            Logger.Write($"Elapsed time during search was {elapsed.ToReadableTime()}");
-            Logger.Write($"Total processor use was {AppDomain.CurrentDomain.MonitoringTotalProcessorTime.ToReadableTime()}");
-            Logger.Write($"Total memory use was {((ulong)Process.GetCurrentProcess().PrivateMemorySize64).ToFileSize()}");
-            Logger.Write($"Total working set was {((ulong)Process.GetCurrentProcess().WorkingSet64).ToFileSize()}");
-            //Logger.Write($"TotalProcessorTime {Process.GetCurrentProcess().TotalProcessorTime.ToReadableTime()}");
-            //Logger.Write($"UserProcessorTime {Process.GetCurrentProcess().UserProcessorTime.ToReadableTime()}");
-            //Logger.Write($"Survived memory size {((ulong)AppDomain.CurrentDomain.MonitoringSurvivedMemorySize).ToFileSize()}");
-            //Logger.Write($"Privileged processor time {System.Diagnostics.Process.GetCurrentProcess().PrivilegedProcessorTime.ToReadableTime()}");
+            if (showStats)
+            {
+                Logger.Write($"Elapsed time during search was {elapsed.ToReadableTime()}");
+                var process = Process.GetCurrentProcess();
+                Logger.Write($"Total memory use was {((ulong)process.PrivateMemorySize64).ToFileSize()}");
+                if (_debugMode)
+                    Logger.Write($"Total working set was {((ulong)process.WorkingSet64).ToFileSize()}");
+                Logger.Write($"Total processor use was {process.TotalProcessorTime.ToReadableTime()}");
+                //Logger.Write($"MonitoringTotalProcessorTime was {AppDomain.CurrentDomain.MonitoringTotalProcessorTime.Divide(_numThreads).ToReadableTime()}");
+                //Logger.Write($"UserProcessorTime {process.UserProcessorTime.ToReadableTime()}");
+                //Logger.Write($"Survived memory size {((ulong)AppDomain.CurrentDomain.MonitoringSurvivedMemorySize).ToFileSize()}");
+                //Logger.Write($"Privileged processor time {process.PrivilegedProcessorTime.ToReadableTime()}");
+            }
+
             Console.WriteLine($"[{LogLevel.Notice}] Log file —▷ {Logger.GetLogName()}");
             Console.WriteLine($"[{LogLevel.Notice}] Process completed {(_noIssue ? "without issue" : "with issues")}");
             if (_noIssue)
@@ -352,8 +369,18 @@ namespace csfind
                 // Only save settings if there were no problems.
                 ConfigManager.Set(Keys.LastCount, value: _totalMatchCount);
                 ConfigManager.Set(Keys.LastUse, value: DateTime.Now);
-                ConfigManager.Set(Keys.FirstRun, value: false);
                 ConfigManager.Set(Keys.TruncateLength, value: truncate);
+                if (firstRun)
+                {
+                    // Set initial configuration values that may be missing.
+                    ConfigManager.Set(Keys.FirstRun, value: false);
+                    ConfigManager.Set(Keys.AppendLog, value: appendLog);
+                    ConfigManager.Set(Keys.ShowStats, value: showStats);
+                    if (Debugger.IsAttached)
+                        ConfigManager.Set(Keys.LogLevel, LogLevel.Debug);
+                    else
+                        ConfigManager.Set(Keys.LogLevel, LogLevel.Info);
+                }
                 if (args.Length > 0)
                     ConfigManager.Set(Keys.LastCommand, string.Join(" ", args));
                 Console.WriteLine();
@@ -394,7 +421,7 @@ namespace csfind
                     var pkt = assem.GetName().GetPublicKeyToken();
                     if (pkt != null && pkt.Length > 0) // ignore null/empty keys
                     {
-                        Logger.Write($"Loaded assembly: {name}","", LogLevel.Init);
+                        Logger.Write($"Loaded assembly: {name}", level: LogLevel.Init);
                     }
                 }
             }

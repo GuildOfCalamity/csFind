@@ -39,7 +39,7 @@ namespace csfind
                 ignore?.Flatten().Handle(ex =>
                 {
                     if (logException)
-                        Logger.Write($"Exception type: {ex.GetType()}\r\nException Message: {ex.Message}", "", LogLevel.Error);
+                        Logger.Write($"Exception type: {ex.GetType()}\r\nException Message: {ex.Message}", level: LogLevel.Error);
                     return true; // don't re-throw
                 });
             }, TaskContinuationOptions.OnlyOnFaulted);

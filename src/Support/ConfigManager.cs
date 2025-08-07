@@ -22,7 +22,7 @@ namespace csfind
         public static event EventHandler<Exception> OnError;
         static ConfigData _data = Load();
         static string _path = string.Empty;
-        static string FilePath
+        public static string FilePath
         {
             get
             {
