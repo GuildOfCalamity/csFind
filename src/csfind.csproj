@@ -48,6 +48,7 @@
   <ItemGroup>
     <Compile Include="Support\CommandLineHelper.cs" />
     <Compile Include="Support\ConfigManager.cs" />
+    <Compile Include="Support\ConsoleProgress.cs" />
     <Compile Include="Support\Extensions.cs" />
     <Compile Include="Support\Logger.cs" />
     <Compile Include="Support\MultiThreadSearcher.cs" />

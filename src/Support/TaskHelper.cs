@@ -53,7 +53,7 @@ namespace csfind
         /// <returns><see cref="Task"/>TResult</returns>
         internal async static Task<TResult> WithTimeout<TResult>(this Task<TResult> task, TimeSpan timeout)
         {
-            Task winner = await Task.WhenAny(task, Task.Delay(timeout));
+            Task winner = await Task.WhenAny(task, Task.Delay(timeout)).ConfigureAwait(false);
 
             if (winner != task)
                 throw new TimeoutException();
@@ -162,6 +162,69 @@ namespace csfind
                 }
             }
             return completed.Select(t => t.Result);
+        }
+
+        /// <summary>
+        /// If not using a console app, set <paramref name="consoleApp"/> to false.
+        /// </summary>
+        /// <param name="task"><see cref="Task"/></param>
+        /// <param name="onSuccess"><see cref="Action"/> to perform if <see cref="TaskContinuationOptions.OnlyOnRanToCompletion"/></param>
+        /// <param name="onCanceled"><see cref="Action"/> to perform if <see cref="TaskContinuationOptions.OnlyOnCanceled"/></param>
+        /// <param name="onFaulted"><see cref="Action"/> to perform if <see cref="TaskContinuationOptions.OnlyOnFaulted"/></param>
+        internal static Task ContinueTaskWithAction(this Task task, Action onSuccess, Action onCanceled, Action onFaulted, bool consoleApp = true)
+        {
+            #region [ContinueWith-Success]
+            task.ContinueWith(t1 => { onSuccess?.Invoke(); },
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnRanToCompletion,
+            consoleApp ? TaskScheduler.Current : TaskScheduler.FromCurrentSynchronizationContext());
+            #endregion
+
+            #region [ContinueWith-Canceled]
+            task.ContinueWith(t2 => { onCanceled?.Invoke(); },
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnCanceled,
+            consoleApp ? TaskScheduler.Current : TaskScheduler.FromCurrentSynchronizationContext());
+            #endregion
+
+            #region [ContinueWith-Faulted]
+            task.ContinueWith(t3 => { onFaulted?.Invoke(); },
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            consoleApp ? TaskScheduler.Current : TaskScheduler.FromCurrentSynchronizationContext());
+            #endregion
+
+            return task;
+        }
+
+        /// <summary>
+        /// Chainable task helper.
+        /// var result = Task.Run(() => SomeAsyncMethodWithReturnValue()).AsCancellable(Cancellation.Token).Result;
+        /// </summary>
+        public static async Task<T> AsCancellable<T>(this Task<T> Instance, CancellationToken token)
+        {
+            if (!token.CanBeCanceled)
+                return await Instance;
+
+            TaskCompletionSource<T> TCS = new TaskCompletionSource<T>();
+
+            using (CancellationTokenRegistration CancelRegistration = token.Register(() => TCS.TrySetCanceled(token), false))
+            {
+                _ = Instance.ContinueWith((PreviousTask) =>
+                {
+                    CancelRegistration.Dispose();
+
+                    if (Instance.IsCanceled)
+                        TCS.TrySetCanceled();
+                    else if (Instance.IsFaulted)
+                        TCS.TrySetException(PreviousTask.Exception ?? new AggregateException("aggregate exception was empty"));
+                    else
+                        TCS.TrySetResult(PreviousTask.Result);
+
+                }, TaskContinuationOptions.ExecuteSynchronously);
+
+                return await TCS.Task;
+            }
         }
     }
 }

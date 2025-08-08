@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -10,24 +9,11 @@ using System.Threading;
 
 namespace csfind
 {
-    #region ◁ Config ▷
     /// <summary>
-    /// Simplify access to common config key names.
+    /// ╒◍──────────────────◍╕
+    /// │   C# Grep Utility   │
+    /// ╘◍──────────────────◍╛
     /// </summary>
-    internal struct Keys
-    {
-        public const string LastCount        = "LastCount";
-        public const string LastUse          = "LastUse";
-        public const string FirstRun         = "FirstRun";
-        public const string TruncateLength   = "TruncateLength";
-        public const string TimeoutInMinutes = "TimeoutInMinutes";
-        public const string LastCommand      = "LastCommand";
-        public const string LogLevel         = "LogLevel";
-        public const string AppendLog        = "AppendLog";
-        public const string ShowStats        = "ShowStats";
-    }
-    #endregion
-
     internal class Program
     {
         #region ◁ Local scope ▷
@@ -63,8 +49,13 @@ namespace csfind
             var firstRun = ConfigManager.Get<bool>(Keys.FirstRun, defaultValue: true);
             if (!appendLog)
             {
-                try { File.Delete(Logger.GetLogName()); }
-                catch (Exception) { }
+                // If the user doesn't want to append the log, then rename existing log each run.
+                var log = Logger.GetLogName();
+                if (File.Exists(log))
+                {
+                    var fi = new FileInfo(log);
+                    Extensions.MoveTo(fi, $"{fi.FullName}.previous");
+                }
             }
             Logger.Write(Extensions.ReflectAssemblyFramework(typeof(Program)), level: LogLevel.Init);
             #endregion
@@ -84,9 +75,10 @@ namespace csfind
                 Console.WriteLine();
                 Logger.Write("▷ Process canceled by user! ", level: LogLevel.Warning);
                 Console.ForegroundColor = ConsoleColor.Gray;
-                Thread.Sleep(1000);
                 if (args.Length == 0)
-                    ForceExitNow(true);
+                {
+                    Extensions.ExecuteAfter(() => { ForceExitNow(true); }, TimeSpan.FromSeconds(1));
+                }
             };
 
             AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
@@ -134,8 +126,8 @@ namespace csfind
                 Logger.Write($"Additional settings —▷ {ConfigManager.FilePath}", level: LogLevel.Notice);
             #endregion
 
-                #region ◁ Parse command line ▷
-                // Test for no arguments.
+            #region ◁ Parse command line ▷
+            // Test for no arguments.
             if (args.Length == 0 && !string.IsNullOrEmpty(lastCmd))
             {
                 Console.ForegroundColor = ConsoleColor.Gray;
@@ -331,7 +323,8 @@ namespace csfind
                     Console.WriteLine($"  ▷ Line #{file.LineNumber} ▷ {file.LineData.Truncate(truncate)} ");
                     Console.ForegroundColor = ConsoleColor.Gray;
                 }
-                Console.WriteLine($"[{LogLevel.Info}] Line details in the console will be truncated to {truncate} chars max.  Full output will be saved in the log file. ");
+                if (results.Count > 0)
+                    Console.WriteLine($"[{LogLevel.Info}] Line details in the console will be truncated to {truncate} chars max.  Full output will be saved in the log file. ");
                 if (showStats)
                 {
                     var metrics = mtSearcher.GetMetrics();
@@ -398,11 +391,6 @@ namespace csfind
         static void OnConfigError(object sender, Exception e)
         {
             Logger.Write($"[{LogLevel.Error}] ConfigManager error: {e.Message}");
-        }
-
-        static void OnStopwatchEvent(object sender, string e)
-        {
-            Logger.Write($"{e}", "", LogLevel.Debug);
         }
         #endregion
 
@@ -478,4 +466,22 @@ namespace csfind
         }
         #endregion
     }
+
+    #region ◁ Config ▷
+    /// <summary>
+    /// Simplify access to common config key names.
+    /// </summary>
+    internal struct Keys
+    {
+        public const string AppendLog        = "AppendLog";
+        public const string FirstRun         = "FirstRun";
+        public const string LastCommand      = "LastCommand";
+        public const string LastCount        = "LastCount";
+        public const string LastUse          = "LastUse";
+        public const string LogLevel         = "LogLevel";
+        public const string ShowStats        = "ShowStats";
+        public const string TimeoutInMinutes = "TimeoutInMinutes";
+        public const string TruncateLength   = "TruncateLength";
+    }
+    #endregion
 }

@@ -21,6 +21,22 @@ namespace csfind
 {
     public static class Extensions
     {
+        #region [Random Helper]
+        private static readonly WeakReference s_random = new WeakReference(null);
+        /// <summary>
+        /// NOTE: In later versions of .NET a "Random.Shared" property was introduced to alleviate the need for this.
+        /// </summary>
+        public static Random Rnd
+        {
+            get
+            {
+                var r = (Random)s_random.Target;
+                if (r == null) { s_random.Target = r = new Random(); }
+                return r;
+            }
+        }
+        #endregion
+
         public const double Epsilon = 0.000000000001;
         static readonly Regex _uncRegex = new Regex(@"^\\\\[^\\\/:*?""<>|\r\n]+\\[^\\\/:*?""<>|\r\n]+(?:\\[^\\\/:*?""<>|\r\n]+)*$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
@@ -157,6 +173,48 @@ namespace csfind
             try { result = System.Diagnostics.FileVersionInfo.GetVersionInfo(fullPath).FileDescription; }
             catch (Exception) { }
             return result;
+        }
+
+        /// <summary>
+        ///   Move current instance and rename current instance when needed
+        /// <example>
+        ///   FileInfo fileInfo = new FileInfo(@"c:\test.txt");
+        ///   File.Create(fileInfo.FullName).Dispose();
+        ///   fileInfo.MoveTo(@"d:\", true);
+        /// </example>
+        /// </summary>
+        /// <param name="fileInfo">Current instance</param>
+        /// <param name="destFileName">The Path to move current instance to, which can specify a different file name</param>
+        /// <param name="renameWhenExists">Bool to specify if current instance should be renamed when exists</param>
+        public static void MoveTo(FileInfo fileInfo, string destFileName, bool rollingRename = false)
+        {
+            string newFullPath = string.Empty;
+
+            if (rollingRename)
+            {
+                int count = 1;
+
+                string fileNameOnly = Path.GetFileNameWithoutExtension(fileInfo.FullName);
+                string extension = Path.GetExtension(fileInfo.FullName);
+                newFullPath = Path.Combine(destFileName, fileInfo.Name);
+
+                while (File.Exists(newFullPath))
+                {
+                    string tempFileName = string.Format("{0}({1})", fileNameOnly, count++);
+                    newFullPath = Path.Combine(destFileName, tempFileName + extension);
+                }
+            }
+
+            try 
+            {
+                string dest = rollingRename ? newFullPath : destFileName;
+                
+                if (File.Exists(dest))
+                    File.Delete(dest);
+                
+                fileInfo.MoveTo(dest); 
+            }
+            catch (Exception) { }
         }
 
         public static bool HasAlpha(this string str)
@@ -817,6 +875,152 @@ namespace csfind
         }
 
         /// <summary>
+        /// Returns an inclusive sequence of <see cref="TimeSpan"/>s from <paramref name="start"/> 
+        /// to <paramref name="end"/>, stepping by <paramref name="step"/> each iteration.
+        /// </summary>
+        /// <param name="start">The first <see cref="TimeSpan"/> in the sequence.</param>
+        /// <param name="end">The last <see cref="TimeSpan"/> in the sequence (inclusive).</param>
+        /// <param name="step">The increment between consecutive <see cref="TimeSpan"/>s.</param>
+        /// <returns><see cref="IEnumerable{T}"/></returns>
+        /// <exception cref="ArgumentOutOfRangeException">
+        /// Thrown if <paramref name="step"/> is zero or negative,
+        /// or if <paramref name="end"/> is earlier than <paramref name="start"/>.
+        /// </exception>
+        public static IEnumerable<TimeSpan> Range(TimeSpan start, TimeSpan end, TimeSpan step)
+        {
+            if (step <= TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(step), "Step must be positive.");
+            if (end < start)
+                throw new ArgumentOutOfRangeException(nameof(end), "End must be greater than or equal to start.");
+
+            // Calculate how many steps will fit (inclusive)
+            long totalTicks = end.Ticks - start.Ticks;
+            long stepTicks = step.Ticks;
+            int stepCount = (int)(totalTicks / stepTicks) + 1;
+
+            return Enumerable.Range(0, stepCount).Select(i => TimeSpan.FromTicks(start.Ticks + i * stepTicks));
+        }
+
+        /// <summary>
+        /// Returns an inclusive sequence of <see cref="TimeSpan"/>s from <paramref name="start"/> 
+        /// to <paramref name="end"/>, stepping by 1 tick each iteration.
+        /// </summary>
+        /// <param name="start">The first <see cref="TimeSpan"/> in the sequence.</param>
+        /// <param name="end">The last <see cref="TimeSpan"/> in the sequence (inclusive).</param>
+        /// <returns><see cref="IEnumerable{T}"/></returns>
+        public static IEnumerable<TimeSpan> Range(TimeSpan start, TimeSpan end)
+        {
+            return Range(start, end, TimeSpan.FromTicks(1));
+        }
+
+        /// <summary>
+        /// Tries to execute the given <paramref name="action"/> for a maximum of 
+        /// <paramref name="max"/> time stepping by 1 additional second each iteration.
+        /// </summary>
+        /// <returns><c>true</c> if successful, <c>false</c> otherwise</returns>
+        public static bool TryForThisLongOrUntilSuccessful(Action action, TimeSpan max)
+        {
+            //ThreadPool.QueueUserWorkItem(_ => {
+                bool success = false;
+                
+                if (max <= TimeSpan.FromSeconds(1))
+                    max = TimeSpan.FromSeconds(2);
+
+                foreach (var ts in Extensions.Range(TimeSpan.FromSeconds(1), max, TimeSpan.FromSeconds(1)))
+                {
+                    try
+                    {
+                        action();
+                        success = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[ERROR] {ex.Message}");
+                        Console.WriteLine($"Trying again in {ts.ToReadableString()}…");
+                        Thread.Sleep(ts);
+                    }
+
+                    if (success)
+                        break; // Exit the loop if action was successful
+                }
+            //});
+            
+            return success;
+        }
+
+        /// <summary>
+        /// Schedules the given action to run once after the specified delay.
+        /// This is fire-and-forget: the action runs on a ThreadPool thread.
+        /// </summary>
+        /// <param name="action">The callback to invoke.</param>
+        /// <param name="delay">How long to wait before invoking.</param>
+        /// <exception cref="ArgumentNullException">If action is null.</exception>
+        public static void ExecuteAfter(Action action, TimeSpan delay, Action<Exception> onError = null)
+        {
+            if (action == null)
+                throw new ArgumentNullException(nameof(action));
+
+            // We need to capture the timer so we can dispose it after firing
+            System.Threading.Timer timer = null;
+            timer = new System.Threading.Timer(_ =>
+            {
+                // Clean up the timer to avoid leaks
+                timer.Dispose();
+                try { action(); }
+                catch (Exception ex) { onError?.Invoke(ex); }   
+            },
+            state: null,
+            dueTime: delay,
+            period: System.Threading.Timeout.InfiniteTimeSpan);
+        }
+
+        /// <summary>
+        /// Asynchronously waits for the delay, then invokes the action.
+        /// Exceptions thrown by the action will fault the returned Task.
+        /// </summary>
+        /// <param name="action">The callback to invoke.</param>
+        /// <param name="delay">How long to wait before invoking.</param>
+        /// <returns>A Task that completes once the action has run.</returns>
+        /// <exception cref="ArgumentNullException">If action is null.</exception>
+        public static async Task ExecuteAfterAsync(Action action, TimeSpan delay, CancellationToken token = default, Action<Exception> onError = null)
+        {
+            if (action == null)
+                throw new ArgumentNullException(nameof(action));
+
+            try
+            {
+                // We don't care about the code below the Task continuing on the
+                // original SynchronizationContext, so we'll use ConfigureAwait(false)
+                // to save some thread syncing time (a small gain).
+                await Task.Delay(delay, token).ConfigureAwait(false);
+                action();
+            }
+            catch (Exception ex)
+            {
+                onError?.Invoke(ex);
+                //throw; // Re-throw to allow caller to handle
+            }
+        }
+
+        /// <summary>
+        /// Executes an action on a new thread using the <see cref="ThreadPool"/>.
+        /// </summary>
+        /// <param name="action">The <see cref="Action"/> to perform.</param>
+        public static void RunThreaded(Action action)
+        {
+            ThreadPool.QueueUserWorkItem(_ => {
+                try
+                {
+                    action();
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[ERROR] RunThreaded: {ex.Message}");
+                }
+            });
+        }
+
+        /// <summary>
         /// Returns an <see cref="Int32"/> amount of days between two <see cref="DateTime"/> objects.
         /// </summary>
         /// <param name="self"><see cref="DateTime"/></param>
@@ -935,6 +1139,8 @@ namespace csfind
             TimeSpan timeUntilMidnight = midnight - now;
             return new DateTime(timeUntilMidnight.Ticks);
         }
+
+        public static IEnumerable<(T value, int index)> WithIndex<T>(this IEnumerable<T> source) => source.Select((value, index) => (value, index));
 
         /// <summary>
         /// Writes each string in the array as a new line to the specified file.
@@ -1136,6 +1342,61 @@ namespace csfind
             }
         }
 
+        public static string NameOf(this object o)
+        {
+            if (o == null)
+                return "null";
+
+            // Similar: System.Reflection.MethodBase.GetCurrentMethod().DeclaringType.Name
+            return $"{o.GetType().Name} ⇒ {o.GetType().BaseType.Name}";
+        }
+
+        public static bool IsDisposable(this Type type)
+        {
+            if (!typeof(IDisposable).IsAssignableFrom(type))
+                return false; //throw new ArgumentException($"Type not disposable: {type.Name}");
+
+            return true;
+        }
+
+        public static bool IsClonable(this Type type)
+        {
+            if (!typeof(ICloneable).IsAssignableFrom(type))
+                return false; //throw new ArgumentException($"Type not clonable: {type.Name}");
+
+            return true;
+        }
+
+        public static bool IsComparable(this Type type)
+        {
+            if (!typeof(IComparable).IsAssignableFrom(type))
+                return false; //throw new ArgumentException($"Type not comparable: {type.Name}");
+
+            return true;
+        }
+
+        public static bool IsConvertible(this Type type)
+        {
+            if (!typeof(IConvertible).IsAssignableFrom(type))
+                return false; //throw new ArgumentException($"Type not convertible: {type.Name}");
+
+            return true;
+        }
+
+        public static bool IsFormattable(this Type type)
+        {
+            if (!typeof(IFormattable).IsAssignableFrom(type))
+                return false; //throw new ArgumentException($"Type not formattable: {type.Name}");
+
+            return true;
+        }
+
+        public static bool IsEnumerable<T>(this Type type)
+        {
+            if (!typeof(IEnumerable<T>).IsAssignableFrom(type))
+                return false; //throw new ArgumentException($"Type not enumerable: {type.Name}");
+            return true;
+        }
 
         /// <summary>
         ///   Returns a multi‐line string of all public static properties on the given type.
@@ -1226,6 +1487,265 @@ namespace csfind
                     Console.WriteLine($"> Module Name: {item.ModuleName}, v{item.FileVersionInfo.FileVersion}");
                 try { item.Dispose(); }
                 catch { }
+            }
+        }
+
+        public static T Retry<T>(this Func<T> operation, int attempts)
+        {
+            while (true)
+            {
+                try
+                {
+                    attempts--;
+                    return operation();
+                }
+                catch (Exception ex) when (attempts > 0)
+                {
+                    Console.WriteLine($"Failed: {ex.Message}");
+                    Console.WriteLine($"Attempts left: {attempts}");
+                    Thread.Sleep(2000);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Func<string, int> getUserId = (id) => { ... };
+        /// int userId = getUserId.Retry(3)("Email");
+        /// </summary>
+        public static Func<TArg, TResult> Retry<TArg, TResult>(this Func<TArg, TResult> func, int maxRetry, int retryDelay = 2000)
+        {
+            return (arg) =>
+            {
+                int tryCount = 0;
+                while (true)
+                {
+                    try
+                    {
+                        return func(arg);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (++tryCount > maxRetry)
+                        {
+                            throw new Exception($"Retry attempts exhausted: {ex.Message}", ex);
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Failed: {ex.Message}");
+                            Console.WriteLine($"Attempts left: {maxRetry - tryCount}");
+                            Thread.Sleep(retryDelay);
+                        }
+                    }
+                }
+            };
+        }
+
+        /// <summary>
+        ///   Generic retry mechanism with exponential back-off
+        /// <example><code>
+        ///   Retry(() => MethodThatHasNoReturnValue());
+        /// </code></example>
+        /// </summary>
+        public static void Retry(this Action action, int maxRetry = 3, int retryDelay = 1000)
+        {
+            int retries = 0;
+            while (true)
+            {
+                try
+                {
+                    action();
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    retries++;
+                    if (retries > maxRetry)
+                    {
+                        throw new TimeoutException($"Operation failed after {maxRetry} retries: {ex.Message}", ex);
+                    }
+                    Console.WriteLine($"⇒ Retry {retries}/{maxRetry} after failure: {ex.Message}. Retrying in {retryDelay} ms...");
+                    Thread.Sleep(retryDelay);
+                    retryDelay *= 2; // Double the delay after each attempt.
+                }
+            }
+        }
+
+        /// <summary>
+        ///   Modified retry mechanism for return value with exponential back-off.
+        /// <example><code>
+        ///   int result = Retry(() => MethodThatReturnsAnInteger());
+        /// </code></example>
+        /// </summary>
+        public static T Retry<T>(this Func<T> func, int maxRetry = 3, int retryDelay = 1000)
+        {
+            int retries = 0;
+            while (true)
+            {
+                try
+                {
+                    return func();
+                }
+                catch (Exception ex)
+                {
+                    retries++;
+                    if (retries > maxRetry)
+                    {
+                        throw new TimeoutException($"Operation failed after {maxRetry} retries: {ex.Message}", ex);
+                    }
+                    Console.WriteLine($"⇒ Retry {retries}/{maxRetry} after failure: {ex.Message}. Retrying in {retryDelay} ms...");
+                    Thread.Sleep(retryDelay);
+                    retryDelay *= 2; // Double the delay after each attempt.
+                }
+            }
+        }
+
+        /// <summary>
+        ///   Generic retry mechanism with exponential back-off
+        /// <example><code>
+        ///   await RetryAsync(() => AsyncMethodThatHasNoReturnValue());
+        /// </code></example>
+        /// </summary>
+        public static async Task RetryAsync(this Func<Task> action, int maxRetry = 3, int retryDelay = 1000)
+        {
+            int retries = 0;
+            while (true)
+            {
+                try
+                {
+                    await action();
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    retries++;
+                    if (retries > maxRetry)
+                    {
+                        throw new InvalidOperationException($"Operation failed after {maxRetry} retries: {ex.Message}", ex);
+                    }
+                    Console.WriteLine($"⇒ Retry {retries}/{maxRetry} after failure: {ex.Message}. Retrying in {retryDelay} ms...");
+                    await Task.Delay(retryDelay);
+                    retryDelay *= 2; // Double the delay after each attempt.
+                }
+            }
+        }
+
+        /// <summary>
+        ///   Modified retry mechanism for return value with exponential back-off.
+        /// <example><code>
+        ///   int result = await RetryAsync(() => AsyncMethodThatReturnsAnInteger());
+        /// </code></example>
+        /// </summary>
+        public static async Task<T> RetryAsync<T>(this Func<Task<T>> func, int maxRetry = 3, int retryDelay = 1000)
+        {
+            int retries = 0;
+            while (true)
+            {
+                try
+                {
+                    return await func();
+                }
+                catch (Exception ex)
+                {
+                    retries++;
+                    if (retries > maxRetry)
+                    {
+                        throw new InvalidOperationException($"Operation failed after {maxRetry} retries: {ex.Message}", ex);
+                    }
+                    Console.WriteLine($"⇒ Retry {retries}/{maxRetry} after failure: {ex.Message}. Retrying in {retryDelay} ms...");
+                    await Task.Delay(retryDelay);
+                    retryDelay *= 2; // Double the delay after each attempt.
+                }
+            }
+        }
+
+        /// <summary>
+        /// Tests whether an array contains the index, and returns the value if true or the defaultValue if false
+        /// </summary>
+        /// <param name="array"></param>
+        /// <param name="index"></param>
+        /// <param name="defaultValue"></param>
+        /// <returns></returns>
+        public static string GetIndex(this string[] array, int index, string defaultValue = "") => (index < array.Length) ? array[index] : defaultValue;
+
+        /// <summary>
+        /// Chunks a large list into smaller n-sized list
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="list">List to be chunked</param>
+        /// <param name="nSize">Size of chunks</param>
+        /// <returns>IEnumerable list of <typeparam name="T"></typeparam> broken up into <paramref name="nSize"/> chunks</returns>
+        public static IEnumerable<List<T>> SplitList<T>(List<T> list, int nSize = 30)
+        {
+            for (int i = 0; i < list.Count; i += nSize)
+            {
+                yield return list.GetRange(i, Math.Min(nSize, list.Count - i));
+            }
+        }
+
+        public static IEnumerable<T> JoinLists<T>(this IEnumerable<T> list1, IEnumerable<T> list2)
+        {
+            var joined = new[] { list1, list2 }.Where(x => x != null).SelectMany(x => x);
+            return joined ?? Enumerable.Empty<T>();
+        }
+
+        public static IEnumerable<T> JoinMany<T>(params IEnumerable<T>[] array)
+        {
+            var final = array.Where(x => x != null).SelectMany(x => x);
+            return final ?? Enumerable.Empty<T>();
+        }
+
+        /// <summary>
+        /// A more accurate averaging method by removing the outliers.
+        /// </summary>
+        public static int CalculateMedian(this List<int> values)
+        {
+            if (values == null || values.Count == 0)
+                return 0;
+
+            values.Sort();
+
+            // Find the middle index
+            int count = values.Count;
+            float medianAverage;
+
+            if (count % 2 == 0)
+            {   // Even number of elements: average the two middle elements
+                int mid1 = count / 2 - 1;
+                int mid2 = count / 2;
+                medianAverage = (values[mid1] + values[mid2]) / 2.0f;
+            }
+            else
+            {   // Odd number of elements: take the middle element
+                int mid = count / 2;
+                medianAverage = values[mid];
+            }
+
+            return (int)medianAverage;
+        }
+
+        /// <summary>
+        /// Adds an ordinal to a number.
+        /// int number = 1;
+        /// var ordinal = number.AddOrdinal(); // 1st
+        /// </summary>
+        /// <param name="number">The number to add the ordinal too.</param>
+        /// <returns>A string with an number and ordinal</returns>
+        public static string AddOrdinal(this int number)
+        {
+            if (number <= 0)
+                return number.ToString();
+
+            switch (number % 100)
+            {
+                case 11: case 12: case 13: return number + "th";
+            }
+
+            switch (number % 10)
+            {
+                case 1: return number + "st";
+                case 2: return number + "nd";
+                case 3: return number + "rd";
+                default: return number + "th";
             }
         }
 
